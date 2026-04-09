@@ -214,6 +214,27 @@ def titulo_audio_exibicao(info: dict | None, url_fallback: str) -> str:
     return faixa or url_fallback
 
 
+# Caracteres inválidos em nomes de arquivo (Windows e uso geral)
+_INVALIDOS_NOME_ARQ = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def sanitizar_nome_arquivo(nome: str, max_len: int = 200) -> str:
+    """Remove caracteres proibidos e limita o tamanho para salvar em disco."""
+    s = (nome or "").strip()
+    s = _INVALIDOS_NOME_ARQ.sub("", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    s = s.rstrip(". ")
+    if len(s) > max_len:
+        s = s[:max_len].rstrip(". ")
+    return s or "audio"
+
+
+def outtmpl_com_nome_base(destino: str, nome_base_sem_ext: str) -> str:
+    """outtmpl yt-dlp com nome fixo; %(ext)s continua vindo do vídeo/áudio baixado."""
+    base = (nome_base_sem_ext or "audio").replace("%", "%%")
+    return os.path.join(destino, base + ".%(ext)s")
+
+
 # ── Estado global ─────────────────────────────────────────────────────────────
 _DIR_SERVIDOR = os.path.dirname(os.path.abspath(__file__))
 PASTA_DOWNLOAD_PADRAO = os.path.join(_DIR_SERVIDOR, "downloads")
@@ -413,6 +434,9 @@ async def executar_download(dl_id: str):
     if info_meta:
         if qualidade == "audio":
             titulo_m = titulo_audio_exibicao(info_meta, dl["url"])
+            ydl_opts["outtmpl"] = outtmpl_com_nome_base(
+                destino, sanitizar_nome_arquivo(titulo_m)
+            )
         else:
             titulo_m = (info_meta.get("title") or "").strip() or dl["url"]
         thumb_m = melhor_thumbnail(info_meta)
