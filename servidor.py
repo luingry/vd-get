@@ -7,6 +7,7 @@ Instale dependências: pip install websockets yt-dlp
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -55,13 +56,27 @@ async def executar_download(dl_id: str):
     qualidade = dl.get("qualidade", "melhor")
     os.makedirs(destino, exist_ok=True)
 
+    def progresso_pct(d: dict) -> float:
+        """yt-dlp coloca _percent (float) antes de colorir _percent_str com ANSI — float(_percent_str) quebrava e ficava 0%."""
+        if d.get("status") != "downloading":
+            return 0.0
+        p = d.get("_percent")
+        if isinstance(p, (int, float)) and p == p:  # evita NaN
+            return max(0.0, min(100.0, float(p)))
+        baixado = d.get("downloaded_bytes")
+        total = d.get("total_bytes") or d.get("total_bytes_estimate")
+        if baixado is not None and total and total > 0:
+            return max(0.0, min(100.0, 100.0 * baixado / total))
+        raw = re.sub(r"\x1b\[[0-9;]*m", "", str(d.get("_percent_str") or "0%"))
+        raw = raw.replace("%", "").strip()
+        try:
+            return max(0.0, min(100.0, float(raw)))
+        except ValueError:
+            return 0.0
+
     def hook(d):
         if d["status"] == "downloading":
-            pct_raw = d.get("_percent_str", "0%").strip().replace("%", "")
-            try:
-                pct = float(pct_raw)
-            except ValueError:
-                pct = 0.0
+            pct = progresso_pct(d)
 
             downloads[dl_id].update({
                 "status":     "baixando",

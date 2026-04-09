@@ -316,7 +316,7 @@
     height: 100%;
     border-radius: 2px;
     background: linear-gradient(90deg, var(--accent), var(--cyan));
-    transition: width .4s ease;
+    transition: width .22s ease-out;
     position: relative;
   }
   .dl-progress-bar.concluido { background: var(--green); }
@@ -594,6 +594,7 @@ function renderCard(dl) {
   const card = document.createElement('div');
   card.className = 'dl-card';
   card.id = `card-${dl.id}`;
+  card.dataset.status = dl.status;
   card.innerHTML = buildCardHTML(dl);
   lista.appendChild(card);
 }
@@ -602,6 +603,12 @@ function adicionarCard(dl) {
   downloads[dl.id] = dl;
   renderCard(dl);
   atualizarStats();
+}
+
+function pctBarra(dl) {
+  const n = Number(dl.progresso);
+  if (Number.isFinite(n)) return Math.min(100, Math.max(0, n));
+  return 0;
 }
 
 function atualizarCard(dl) {
@@ -618,6 +625,46 @@ function atualizarCard(dl) {
     card.remove();
     renderCard(dl);
     verificarEmpties();
+    atualizarStats();
+    return;
+  }
+
+  // Mesmo card na fila ativa: atualiza só a barra (mantém o elemento → width anima de verdade)
+  const bar = card.querySelector('.dl-progress-bar');
+  const podeLeve = bar && ['baixando', 'processando', 'pendente'].includes(statusNovo);
+  if (podeLeve) {
+    const pct = pctBarra(dl);
+    const barClass = statusNovo === 'baixando' ? 'baixando'
+      : statusNovo === 'concluido' ? 'concluido'
+      : statusNovo === 'erro' ? 'erro' : '';
+    bar.style.width = `${pct}%`;
+    bar.className = 'dl-progress-bar ' + barClass;
+
+    const st = card.querySelector('.dl-status');
+    if (st) {
+      st.className = 'dl-status ' + statusNovo;
+      st.textContent = statusNovo;
+    }
+    let info = card.querySelector('.dl-meta .dl-info');
+    if (statusNovo === 'baixando') {
+      if (!info) {
+        const meta = card.querySelector('.dl-meta');
+        if (meta) {
+          info = document.createElement('span');
+          info.className = 'dl-info';
+          meta.appendChild(info);
+        }
+      }
+      if (info) {
+        info.innerHTML = `<b>${escHtml(dl.velocidade || '')}</b>  ${escHtml(dl.baixado || '')}/${escHtml(dl.total || '')}  ETA ${escHtml(dl.eta || '')}`;
+      }
+    } else if (info) {
+      info.remove();
+    }
+
+    card.dataset.status = dl.status;
+    const thumb = card.querySelector('.dl-thumb');
+    if (thumb) thumb.dataset.status = statusNovo;
     atualizarStats();
     return;
   }
@@ -639,7 +686,7 @@ function removerCard(id) {
 }
 
 function buildCardHTML(dl) {
-  const pct       = dl.progresso || 0;
+  const pct       = pctBarra(dl);
   const barClass  = dl.status === 'concluido' ? 'concluido'
                   : dl.status === 'erro'      ? 'erro'
                   : dl.status === 'baixando'  ? 'baixando' : '';
