@@ -92,6 +92,26 @@
   .status-ws.conectado { color: var(--green); }
   .status-ws.erro      { color: var(--red); }
 
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  a.proto-link {
+    font-family: var(--font-mono);
+    font-size: .72rem;
+    color: var(--muted);
+    text-decoration: none;
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 4px 10px;
+    transition: all .2s;
+    white-space: nowrap;
+  }
+  a.proto-link:hover { border-color: var(--accent); color: var(--accent2); }
+
   /* ── Layout ── */
   main {
     max-width: 960px;
@@ -411,7 +431,10 @@
     <div class="logo-dot off" id="ws-dot"></div>
     <span>VD</span>GET
   </div>
-  <div class="status-ws erro" id="ws-status">● desconectado</div>
+  <div class="header-right">
+    <a class="proto-link" href="vdget://iniciar" title="Uma vez: execute instalar-protocolo.bat nesta pasta (ou importe vdget-protocol.reg)">Ligar VDGET</a>
+    <div class="status-ws erro" id="ws-status">● desconectado</div>
+  </div>
 </header>
 
 <main>
