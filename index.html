@@ -89,6 +89,14 @@
     color: var(--muted);
     display: flex; align-items: center; gap: 6px;
   }
+  .status-ws::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+  }
   .status-ws.conectado { color: var(--green); }
   .status-ws.erro      { color: var(--red); }
 
@@ -255,8 +263,7 @@
     border: none;
     background: transparent;
     cursor: pointer;
-    font-size: 1.05rem;
-    line-height: 1;
+    line-height: 0;
     color: var(--muted);
     padding: 0;
     display: flex;
@@ -271,6 +278,7 @@
   }
   .destino-opt-star:active { transform: scale(.92); }
   .destino-opt-star.ativo { color: var(--yellow); }
+  .destino-opt-star .icon-svg { width: 18px; height: 18px; }
   .destino-opt-path {
     font-family: var(--font-mono);
     font-size: .78rem;
@@ -299,8 +307,7 @@
     border-radius: 6px;
     background: transparent;
     color: var(--muted);
-    font-size: 1rem;
-    line-height: 1;
+    line-height: 0;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -317,6 +324,7 @@
     color: var(--red);
     background: rgba(248, 113, 113, .12);
   }
+  .destino-opt-remove .icon-svg { width: 14px; height: 14px; }
 
   select {
     background: var(--bg);
@@ -360,6 +368,10 @@
     cursor: pointer;
     transition: background .2s, transform .1s;
     white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
   }
   .btn-add:hover   { background: var(--accent2); }
   .btn-add:active  { transform: scale(.97); }
@@ -416,10 +428,12 @@
     justify-content: flex-end;
   }
   #ordenacao-concluidos .ordenacao-icon {
-    font-size: 1rem;
-    line-height: 1;
-    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
   }
+  #ordenacao-concluidos .ordenacao-icon .icon-svg { width: 16px; height: 16px; }
   .btn-icon.btn-sort-concluidos:hover {
     border-color: var(--accent);
     color: var(--accent2);
@@ -459,7 +473,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.2rem;
     flex-shrink: 0;
     overflow: hidden;
   }
@@ -546,7 +559,7 @@
     width: 30px; height: 30px;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer;
-    font-size: .85rem;
+    line-height: 0;
     transition: all .15s;
   }
   .btn-icon:hover { border-color: var(--red); color: var(--red); }
@@ -562,36 +575,27 @@
     font-size: .8rem;
     border: 1px dashed var(--border2);
     border-radius: 12px;
+    user-select: none;
+    -webkit-user-select: none;
   }
-  .empty .icon { font-size: 2rem; margin-bottom: 10px; opacity: .4; }
-
-  /* ── Stats bar ── */
-  .stats {
+  .empty .icon {
     display: flex;
-    gap: 20px;
-    flex-wrap: wrap;
-  }
-  .stat {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .stat-val {
-    font-size: 1.6rem;
-    font-weight: 800;
-    line-height: 1;
-  }
-  .stat-val.a { color: var(--accent2); }
-  .stat-val.b { color: var(--cyan); }
-  .stat-val.c { color: var(--green); }
-  .stat-val.d { color: var(--red); }
-  .stat-label {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: .68rem;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+    opacity: .45;
     color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: .08em;
   }
+  .empty .icon .icon-svg { width: 40px; height: 40px; }
+
+  /* Ícones minimalistas (traço bold) */
+  .icon-svg {
+    display: block;
+    flex-shrink: 0;
+  }
+  .btn-icon .icon-svg { width: 16px; height: 16px; }
+  .btn-add .icon-svg { width: 18px; height: 18px; }
+  .dl-thumb .icon-svg { width: 22px; height: 22px; color: var(--muted); }
 
   /* ── Scrollbar ── */
   ::-webkit-scrollbar { width: 6px; }
@@ -611,41 +615,21 @@
     <button type="button" class="btn-small danger" id="btn-parar-servidor" disabled
       onclick="encerrarServidor()"
       title="Encerra o processo Python (servidor WebSocket) neste computador">Parar servidor</button>
-    <div class="status-ws erro" id="ws-status">● desconectado</div>
+    <div class="status-ws erro" id="ws-status">desconectado</div>
   </div>
 </header>
 
 <main>
 
-  <!-- Stats -->
-  <div class="stats">
-    <div class="stat">
-      <div class="stat-val a" id="stat-baixando">0</div>
-      <div class="stat-label">Baixando</div>
-    </div>
-    <div class="stat">
-      <div class="stat-val b" id="stat-pendente">0</div>
-      <div class="stat-label">Pendentes</div>
-    </div>
-    <div class="stat">
-      <div class="stat-val c" id="stat-concluido">0</div>
-      <div class="stat-label">Concluídos</div>
-    </div>
-    <div class="stat">
-      <div class="stat-val d" id="stat-erro">0</div>
-      <div class="stat-label">Com erro</div>
-    </div>
-  </div>
-
   <!-- Add box -->
   <div class="add-box">
-    <h2>// Adicionar downloads</h2>
+    <h2>Lista de download</h2>
     <textarea id="input-urls" placeholder="Cole um ou mais links aqui (um por linha)&#10;https://youtube.com/watch?v=...&#10;https://twitter.com/..."></textarea>
     <div class="add-controls">
       <select id="select-qualidade">
-        <option value="melhor">⬆ Melhor qualidade</option>
-        <option value="pior">⬇ Menor tamanho</option>
-        <option value="audio">🎵 Somente áudio (MP3)</option>
+        <option value="melhor">Melhor qualidade</option>
+        <option value="pior">Menor tamanho</option>
+        <option value="audio">Somente áudio (MP3)</option>
       </select>
       <div class="destino-combobox" id="destino-combobox">
         <div class="destino-input-wrap">
@@ -655,8 +639,11 @@
         </div>
         <div class="destino-dropdown" id="destino-dropdown" role="listbox" aria-label="Pastas salvas"></div>
       </div>
-      <button class="btn-add" id="btn-add" onclick="adicionarDownloads()">
-        ↓ Iniciar Download
+      <button class="btn-add" id="btn-add" onclick="adicionarDownloads()" type="button">
+        <span style="display:inline-flex;align-items:center;gap:8px;">
+          <svg class="icon-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+          Download
+        </span>
       </button>
     </div>
   </div>
@@ -671,7 +658,7 @@
     </div>
     <div class="dl-list" id="lista-ativos">
       <div class="empty" id="empty-ativos">
-        <div class="icon">📭</div>
+        <div class="icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-6l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></div>
         Nenhum download na fila
       </div>
     </div>
@@ -686,14 +673,14 @@
       </div>
       <div class="section-actions">
         <button type="button" class="btn-icon btn-sort-concluidos" id="ordenacao-concluidos" data-ordenacao="recente" aria-label="Ordenar: mais recentes primeiro" title="Mais recentes primeiro — clique para mais antigos primeiro" onclick="toggleOrdenacaoConcluidos()">
-          <span class="ordenacao-icon" aria-hidden="true">↓</span>
+          <span class="ordenacao-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg></span>
         </button>
         <button type="button" class="btn-small" onclick="limparConcluidos()">Limpar todos</button>
       </div>
     </div>
     <div class="dl-list" id="lista-concluidos">
       <div class="empty" id="empty-concluidos">
-        <div class="icon">✅</div>
+        <div class="icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg></div>
         Nenhum download concluído ainda
       </div>
     </div>
@@ -889,7 +876,7 @@ function appendDestinoDropdownRow(dd, p, padrao) {
   const starBtn = document.createElement('button');
   starBtn.type = 'button';
   starBtn.className = 'destino-opt-star' + (p === padrao ? ' ativo' : '');
-  starBtn.textContent = p === padrao ? '★' : '☆';
+  starBtn.innerHTML = p === padrao ? ICON_STAR_FILL : ICON_STAR_STROKE;
   starBtn.title = 'Caminho padrão ao abrir a página';
   starBtn.setAttribute('aria-label', p === padrao ? `Remover padrão: ${p}` : `Definir como padrão: ${p}`);
   starBtn.setAttribute('aria-pressed', p === padrao ? 'true' : 'false');
@@ -913,7 +900,7 @@ function appendDestinoDropdownRow(dd, p, padrao) {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'destino-opt-remove';
-    removeBtn.textContent = '×';
+    removeBtn.innerHTML = ICON_X_BTN;
     removeBtn.title = 'Remover da lista';
     removeBtn.setAttribute('aria-label', `Remover ${p} da lista`);
     removeBtn.setAttribute('tabindex', '-1');
@@ -1093,7 +1080,7 @@ function conectar() {
     else if (msg.tipo === 'servidor_encerrando') {
       const lbl = document.getElementById('ws-status');
       lbl.className = 'status-ws erro';
-      lbl.textContent = '● encerrando servidor…';
+      lbl.textContent = 'encerrando servidor…';
     }
     atualizarStats();
   };
@@ -1116,15 +1103,15 @@ function setStatus(ok) {
   if (ok) {
     dot.classList.remove('off');
     lbl.className = 'status-ws conectado';
-    lbl.textContent = '● conectado';
+    lbl.textContent = 'conectado';
     document.getElementById('btn-add').disabled = false;
     if (btnParar) btnParar.disabled = false;
   } else {
     dot.classList.add('off');
     lbl.className = 'status-ws erro';
     lbl.textContent = naoReconectar
-      ? '● servidor parado'
-      : '● desconectado — reconectando...';
+      ? 'servidor parado'
+      : 'desconectado — reconectando...';
     document.getElementById('btn-add').disabled = true;
     if (btnParar) btnParar.disabled = true;
   }
@@ -1188,7 +1175,11 @@ function sincronizarUIOrdenacaoConcluidos() {
   if (!btn) return;
   const antigo = btn.dataset.ordenacao === 'antigo';
   const icon = btn.querySelector('.ordenacao-icon');
-  if (icon) icon.textContent = antigo ? '↑' : '↓';
+  if (icon) {
+    icon.innerHTML = antigo
+      ? '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>'
+      : '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>';
+  }
   btn.setAttribute('aria-label', antigo ? 'Ordenar: mais antigos primeiro' : 'Ordenar: mais recentes primeiro');
   btn.title = antigo
     ? 'Mais antigos primeiro — clique para mais recentes primeiro'
@@ -1253,13 +1244,25 @@ function encerrarServidor() {
 }
 
 // ── Renderização ──────────────────────────────────────────────────────────
-const ICONES = {
-  pendente:    '⏳',
-  baixando:    '⬇',
-  processando: '⚙',
-  concluido:   '✓',
-  erro:        '✕',
+function iconeSVG(inner) {
+  return '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + '</svg>';
+}
+
+const ICON_THUMB = {
+  pendente: iconeSVG('<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'),
+  baixando: iconeSVG('<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>'),
+  processando: iconeSVG('<circle cx="5" cy="12" r="2.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="2.5" fill="currentColor" stroke="none"/>'),
+  concluido: iconeSVG('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/>'),
+  erro: iconeSVG('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
 };
+const ICON_THUMB_FALLBACK = iconeSVG('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.27 6.96 8.73 5.05 8.73-5.05"/><path d="M12 22.08V12"/>');
+
+const ICON_FOLDER_BTN = iconeSVG('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9l-1.14-1.72A2 2 0 0 0 9.07 2H4a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2Z"/>');
+const ICON_PLAY_BTN = '<svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><polygon points="10 7 17 12 10 17 10 7" fill="currentColor" stroke="none"/></svg>';
+const ICON_X_BTN = iconeSVG('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
+
+const ICON_STAR_STROKE = iconeSVG('<path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88-6.18-3.25-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>');
+const ICON_STAR_FILL = '<svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88-6.18-3.25-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="currentColor" stroke="none"/></svg>';
 
 function listaAlvo(status) {
   return ['concluido', 'erro'].includes(status)
@@ -1362,7 +1365,7 @@ function atualizarCard(dl) {
         }
       } else {
         delete thumb.dataset.thumbSrc;
-        thumb.textContent = ICONES[statusNovo] || '📦';
+        thumb.innerHTML = ICON_THUMB[statusNovo] || ICON_THUMB_FALLBACK;
       }
     }
 
@@ -1403,14 +1406,14 @@ function buildCardHTML(dl) {
 
   const thumbContent = dl.thumb
     ? `<img src="${dl.thumb}" alt="" onerror="this.style.display='none'">`
-    : ICONES[dl.status] || '📦';
+    : (ICON_THUMB[dl.status] || ICON_THUMB_FALLBACK);
 
   const showProgress = ['baixando','processando','pendente'].includes(dl.status) || pct > 0;
 
   const botoesConcluido = dl.status === 'concluido'
-    ? `<button type="button" class="btn-icon btn-open-folder" onclick="abrirPastaArquivo('${dl.id}')" title="Abrir pasta do arquivo">📂</button>${
+    ? `<button type="button" class="btn-icon btn-open-folder" onclick="abrirPastaArquivo('${dl.id}')" title="Abrir pasta do arquivo">${ICON_FOLDER_BTN}</button>${
         dl.arquivo
-          ? `<button type="button" class="btn-icon btn-open-file" onclick="abrirArquivoDireto('${dl.id}')" title="Abrir arquivo">▶</button>`
+          ? `<button type="button" class="btn-icon btn-open-file" onclick="abrirArquivoDireto('${dl.id}')" title="Abrir arquivo">${ICON_PLAY_BTN}</button>`
           : ''
       }`
     : '';
@@ -1430,7 +1433,7 @@ function buildCardHTML(dl) {
     </div>
     <div class="dl-actions">
       ${botoesConcluido}
-      <button type="button" class="btn-icon" onclick="removerItem('${dl.id}')" title="Remover">✕</button>
+      <button type="button" class="btn-icon" onclick="removerItem('${dl.id}')" title="Remover">${ICON_X_BTN}</button>
     </div>
   `;
 }
@@ -1462,11 +1465,6 @@ function atualizarStats() {
   Object.values(downloads).forEach(d => {
     if (vals[d.status] !== undefined) vals[d.status]++;
   });
-
-  document.getElementById('stat-baixando').textContent  = vals.baixando + vals.processando;
-  document.getElementById('stat-pendente').textContent  = vals.pendente;
-  document.getElementById('stat-concluido').textContent = vals.concluido;
-  document.getElementById('stat-erro').textContent      = vals.erro;
 
   const ativos = vals.baixando + vals.processando + vals.pendente;
   document.getElementById('badge-ativos').textContent     = ativos;
