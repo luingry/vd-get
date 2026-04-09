@@ -408,6 +408,19 @@
   .btn-small.danger:hover { border-color: var(--red); color: #fca5a5; }
   .btn-small:disabled { opacity: .45; cursor: not-allowed; }
 
+  .section-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  #ordenacao-concluidos {
+    padding: 4px 10px;
+    font-size: .72rem;
+    max-width: 200px;
+  }
+
   /* ── Download card ── */
   .dl-list {
     display: flex;
@@ -667,7 +680,13 @@
         Concluídos
         <span class="badge" id="badge-concluidos">0</span>
       </div>
-      <button class="btn-small" onclick="limparConcluidos()">Limpar todos</button>
+      <div class="section-actions">
+        <select id="ordenacao-concluidos" aria-label="Ordenar lista de concluídos" onchange="onOrdenacaoConcluidosChange()">
+          <option value="recente">Mais recentes primeiro</option>
+          <option value="antigo">Mais antigos primeiro</option>
+        </select>
+        <button type="button" class="btn-small" onclick="limparConcluidos()">Limpar todos</button>
+      </div>
     </div>
     <div class="dl-list" id="lista-concluidos">
       <div class="empty" id="empty-concluidos">
@@ -694,6 +713,7 @@ let destinoFilterManual = '';
 const LS_CAMINHOS = 'vdget_caminhos_v1';
 const LS_LEGACY_DESTINOS = 'vdget_destinos';
 const LS_LEGACY_PADRAO = 'vdget_destino_padrao';
+const LS_ORDEM_CONCLUIDOS = 'vdget_ordem_concluidos';
 const MAX_DESTINOS_SALVOS = 30;
 const DESTINO_BUILTIN = '/downloads';
 
@@ -1119,6 +1139,7 @@ function carregarEstado(lista) {
     downloads[dl.id] = dl;
     renderCard(dl);
   });
+  ordenarListaConcluidos();
   atualizarStats();
 }
 
@@ -1149,6 +1170,50 @@ function removerItem(id) {
 
 function limparConcluidos() {
   enviar({ acao: 'limpar_concluidos' });
+}
+
+function tsOrdenacao(dl) {
+  const f = Number(dl.finalizado_ts);
+  if (Number.isFinite(f)) return f;
+  const c = Number(dl.criado_ts);
+  if (Number.isFinite(c)) return c;
+  return 0;
+}
+
+function ordenarListaConcluidos() {
+  const lista = document.getElementById('lista-concluidos');
+  const sel = document.getElementById('ordenacao-concluidos');
+  if (!lista || !sel) return;
+  const antigoPrimeiro = sel.value === 'antigo';
+  const cards = [...lista.querySelectorAll('.dl-card')];
+  cards.sort((a, b) => {
+    const ida = a.id.replace(/^card-/, '');
+    const idb = b.id.replace(/^card-/, '');
+    const ta = tsOrdenacao(downloads[ida] || {});
+    const tb = tsOrdenacao(downloads[idb] || {});
+    let cmp = tb - ta;
+    if (cmp === 0) cmp = ida.localeCompare(idb);
+    return antigoPrimeiro ? -cmp : cmp;
+  });
+  for (const c of cards) lista.appendChild(c);
+}
+
+function onOrdenacaoConcluidosChange() {
+  const sel = document.getElementById('ordenacao-concluidos');
+  if (!sel) return;
+  try {
+    localStorage.setItem(LS_ORDEM_CONCLUIDOS, sel.value);
+  } catch (_) { /* ignore */ }
+  ordenarListaConcluidos();
+}
+
+function aplicarPreferenciaOrdenacaoConcluidos() {
+  const sel = document.getElementById('ordenacao-concluidos');
+  if (!sel) return;
+  try {
+    const v = localStorage.getItem(LS_ORDEM_CONCLUIDOS);
+    if (v === 'antigo' || v === 'recente') sel.value = v;
+  } catch (_) { /* ignore */ }
 }
 
 function abrirPastaArquivo(id) {
@@ -1218,6 +1283,7 @@ function atualizarCard(dl) {
       (['concluido','erro'].includes(statusNovo) !== ['concluido','erro'].includes(statusOld))) {
     card.remove();
     renderCard(dl);
+    ordenarListaConcluidos();
     verificarEmpties();
     atualizarStats();
     return;
@@ -1256,9 +1322,30 @@ function atualizarCard(dl) {
       info.remove();
     }
 
-    card.dataset.status = dl.status;
+    const titleEl = card.querySelector('.dl-title');
+    if (titleEl) {
+      titleEl.textContent = dl.titulo || dl.url;
+      titleEl.setAttribute('title', dl.url);
+    }
     const thumb = card.querySelector('.dl-thumb');
-    if (thumb) thumb.dataset.status = statusNovo;
+    if (thumb) {
+      thumb.dataset.status = statusNovo;
+      if (dl.thumb) {
+        if (thumb.dataset.thumbSrc !== dl.thumb) {
+          thumb.dataset.thumbSrc = dl.thumb;
+          const img = document.createElement('img');
+          img.alt = '';
+          img.src = dl.thumb;
+          img.onerror = function () { this.style.display = 'none'; };
+          thumb.replaceChildren(img);
+        }
+      } else {
+        delete thumb.dataset.thumbSrc;
+        thumb.textContent = ICONES[statusNovo] || '📦';
+      }
+    }
+
+    card.dataset.status = dl.status;
     atualizarStats();
     return;
   }
@@ -1372,6 +1459,7 @@ document.getElementById('input-urls').addEventListener('keydown', (e) => {
 
 // ── Init ──────────────────────────────────────────────────────────────────
 initDestinoCombobox();
+aplicarPreferenciaOrdenacaoConcluidos();
 
 conectar();
 </script>

@@ -11,6 +11,7 @@ import platform
 import re
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime
 
@@ -40,6 +41,29 @@ def strip_ansi(text) -> str:
     if text is None:
         return ""
     return ANSI_ESCAPE.sub("", str(text)).strip()
+
+
+def melhor_thumbnail(info: dict | None) -> str:
+    """URL da melhor miniatura disponível no dict retornado pelo yt-dlp."""
+    if not info:
+        return ""
+    t = (info.get("thumbnail") or "").strip()
+    if t:
+        return t
+    thumbs = info.get("thumbnails") or []
+    if not thumbs:
+        return ""
+
+    def area(th):
+        try:
+            w = int(th.get("width") or 0)
+            h = int(th.get("height") or 0)
+            return w * h
+        except (TypeError, ValueError):
+            return 0
+
+    best = max(thumbs, key=area)
+    return (best.get("url") or "").strip()
 
 
 # ── Estado global ─────────────────────────────────────────────────────────────
@@ -228,6 +252,22 @@ async def executar_download(dl_id: str):
             "preferredquality": "192",
         }]
 
+    def _somente_meta():
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(dl["url"], download=False)
+        except Exception:
+            return None
+
+    info_meta = await loop.run_in_executor(None, _somente_meta)
+    if dl_id not in downloads:
+        return
+    if info_meta:
+        titulo_m = (info_meta.get("title") or "").strip() or dl["url"]
+        thumb_m = melhor_thumbnail(info_meta)
+        downloads[dl_id].update({"titulo": titulo_m, "thumb": thumb_m})
+        await broadcast({"tipo": "atualizar", "download": downloads[dl_id]})
+
     def _baixar():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(dl["url"], download=True)
@@ -247,6 +287,7 @@ async def executar_download(dl_id: str):
             "velocidade": "",
             "eta":        "",
             "fim":        datetime.now().strftime("%H:%M:%S"),
+            "finalizado_ts": time.time(),
             "arquivo":   caminho_final or "",
         })
 
@@ -255,6 +296,7 @@ async def executar_download(dl_id: str):
             "status":  "erro",
             "erro":    str(e),
             "progresso": 0,
+            "finalizado_ts": time.time(),
         })
 
     await broadcast({"tipo": "atualizar", "download": downloads[dl_id]})
@@ -306,6 +348,7 @@ async def handler(ws):
                         "titulo":     url,
                         "thumb":      "",
                         "inicio":     datetime.now().strftime("%H:%M:%S"),
+                        "criado_ts":  time.time(),
                         "fim":        "",
                         "erro":       "",
                         "arquivo":    "",
