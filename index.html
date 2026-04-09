@@ -627,7 +627,7 @@
     <span class="logo-type">VDGET</span>
   </div>
   <div class="header-right">
-    <a class="proto-link" href="vdget://iniciar" title="Uma vez: execute instalar-protocolo.bat nesta pasta (ou importe vdget-protocol.reg)">Ligar VDGET</a>
+    <a class="proto-link" href="vdget://iniciar" title="Uma vez: execute instalar-protocolo.bat nesta pasta">Ligar VDGET</a>
     <button type="button" class="btn-small danger" id="btn-parar-servidor" disabled
       onclick="encerrarServidor()"
       title="Encerra o processo Python (servidor WebSocket) neste computador">Parar servidor</button>
@@ -808,14 +808,6 @@ function lerDestinoState() {
 
 function loadDestinosSalvos() {
   return lerDestinoState().paths.slice();
-}
-
-function saveDestinosSalvos(arr) {
-  const cur = lerDestinoState();
-  gravarDestinoState({
-    paths: arr.slice(0, MAX_DESTINOS_SALVOS),
-    padrao: cur.padrao,
-  });
 }
 
 /** Lista exibida: rota embutida + histórico (sem duplicar), ordem alfabética fixa. */

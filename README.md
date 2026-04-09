@@ -29,8 +29,6 @@ Se **`servidor.py`** já estiver a correr, pode abrir **`index.html`** diretamen
 
 Se mover a pasta do projeto, volte a correr **`instalar-protocolo.bat`** para atualizar o caminho.
 
-> O ficheiro **`vdget-protocol.reg`** é um exemplo com caminho fixo; prefira o `.bat`, que gera o `.reg` com o caminho correto.
-
 ### Modo painel HTTP: `controlador.py` (opcional)
 
 ```bash
@@ -51,7 +49,7 @@ py -3 controlador.py
 | **`servidor.py`** | Backend: WebSocket na porta **8765**, fila de downloads com **yt-dlp**, pastas/arquivos no disco. |
 | **`iniciar.bat`** | Arranque rápido: valida Python e ficheiros, instala dependências, inicia `servidor.py` minimizado e abre `index.html`. |
 | **`instalar-protocolo.bat`** | Regista o protocolo **`vdget://`** no Windows para disparar o `iniciar.bat` desta pasta. |
-| **`vdget-protocol.reg`** | Exemplo de registo manual do protocolo (caminho fixo; use o `.bat` após mover o projeto). |
+| **`abrir_interface.py`** | Usado pelo `iniciar.bat`: foca a janela do navegador com a VDGET ou abre o `index.html`. |
 | **`controlador.py`** | Servidor HTTP local (**8764**): serve a interface e API para ligar/parar/reiniciar o `servidor.py`. |
 | **`downloads/`** | Pasta criada em execução (se usar destino padrão): ficheiros baixados ficam aqui, ao lado do servidor. |
 
