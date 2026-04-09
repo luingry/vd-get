@@ -193,27 +193,11 @@
     flex: 1;
     min-width: 0;
     border: none;
-    border-radius: var(--radius) 0 0 var(--radius);
+    border-radius: var(--radius);
     background: transparent;
   }
   .destino-input-wrap input[type="text"]:focus {
     box-shadow: none;
-  }
-  .destino-toggle {
-    flex-shrink: 0;
-    width: 40px;
-    border: none;
-    border-left: 1px solid var(--border2);
-    border-radius: 0 var(--radius) var(--radius) 0;
-    background: transparent;
-    color: var(--muted);
-    font-size: .75rem;
-    cursor: pointer;
-    transition: color .15s, background .15s;
-  }
-  .destino-toggle:hover {
-    color: var(--accent2);
-    background: rgba(124,106,247,.08);
   }
   .destino-dropdown {
     position: absolute;
@@ -252,7 +236,17 @@
   }
   .destino-opt:last-child { border-bottom: none; }
   .destino-opt:hover { background: rgba(124,106,247,.08); }
-  .destino-opt.ativo { background: rgba(34,211,238,.06); }
+  .destino-opt.ativo {
+    background: rgba(124, 106, 247, .28);
+    box-shadow: inset 3px 0 0 var(--accent);
+    padding-left: 9px;
+  }
+  .destino-opt.ativo:hover {
+    background: rgba(124, 106, 247, .34);
+  }
+  .destino-opt.ativo .destino-opt-path {
+    color: #d4ccff;
+  }
   .destino-opt-star {
     flex-shrink: 0;
     width: 32px;
@@ -285,13 +279,16 @@
     flex: 1;
     min-width: 0;
   }
-  .destino-opt-padrao-hint {
+  .destino-opt-hint {
     font-size: .65rem;
     font-family: var(--font-mono);
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: .06em;
     flex-shrink: 0;
+  }
+  .destino-opt.ativo .destino-opt-hint {
+    color: var(--accent2);
   }
 
   select {
@@ -611,7 +608,6 @@
           <input type="text" id="input-destino" placeholder="Ao abrir a lista o campo esvazia para buscar; fora do foco mostra o selecionado"
             autocomplete="off" spellcheck="false" aria-autocomplete="list" aria-controls="destino-dropdown"
             aria-expanded="false" role="combobox">
-          <button type="button" class="destino-toggle" id="destino-toggle" title="Abrir ou fechar sugestões" aria-label="Sugestões">▾</button>
         </div>
         <div class="destino-dropdown" id="destino-dropdown" role="listbox" aria-label="Pastas salvas"></div>
       </div>
@@ -835,8 +831,11 @@ function appendDestinoDropdownRow(dd, p, padrao) {
   pathSpan.textContent = p;
 
   const hint = document.createElement('span');
-  hint.className = 'destino-opt-padrao-hint';
-  hint.textContent = p === padrao ? 'padrão' : '';
+  hint.className = 'destino-opt-hint';
+  const hintBits = [];
+  if (p === padrao) hintBits.push('padrão');
+  if (destinoCommitted.trim() === p) hintBits.push('selecionado');
+  hint.textContent = hintBits.join(' · ');
 
   row.appendChild(starBtn);
   row.appendChild(pathSpan);
@@ -919,14 +918,6 @@ function renderDestinoDropdown() {
   listados.forEach(p => appendDestinoDropdownRow(dd, p, padrao));
 }
 
-function toggleDestinoDropdown() {
-  if (destinoDropdownAberto()) setDestinoDropdownAberto(false);
-  else {
-    renderDestinoDropdown();
-    setDestinoDropdownAberto(true);
-  }
-}
-
 let destinoClickOutsideBound = false;
 function bindDestinoClickOutside() {
   if (destinoClickOutsideBound) return;
@@ -939,9 +930,8 @@ function bindDestinoClickOutside() {
 
 function initDestinoCombobox() {
   const input = document.getElementById('input-destino');
-  const toggle = document.getElementById('destino-toggle');
   const dd = document.getElementById('destino-dropdown');
-  if (!input || !toggle || !dd) return;
+  if (!input || !dd) return;
 
   lerDestinoState();
   destinoCommitted = getDestinoPadrao();
@@ -990,14 +980,6 @@ function initDestinoCombobox() {
       renderDestinoDropdown();
       setDestinoDropdownAberto(true);
     }
-  });
-
-  toggle.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    bindDestinoClickOutside();
-    toggleDestinoDropdown();
-    if (destinoDropdownAberto()) input.focus();
   });
 
   bindDestinoClickOutside();
