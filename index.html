@@ -673,7 +673,7 @@
       </div>
       <div class="section-actions">
         <button type="button" class="btn-icon btn-sort-concluidos" id="ordenacao-concluidos" data-ordenacao="recente" aria-label="Ordenar: mais recentes primeiro" title="Mais recentes primeiro — clique para mais antigos primeiro" onclick="toggleOrdenacaoConcluidos()">
-          <span class="ordenacao-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg></span>
+          <span class="ordenacao-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h6"/></svg></span>
         </button>
         <button type="button" class="btn-small" onclick="limparConcluidos()">Limpar todos</button>
       </div>
@@ -1177,8 +1177,8 @@ function sincronizarUIOrdenacaoConcluidos() {
   const icon = btn.querySelector('.ordenacao-icon');
   if (icon) {
     icon.innerHTML = antigo
-      ? '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>'
-      : '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>';
+      ? '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h6"/><path d="M4 12h10"/><path d="M4 18h16"/></svg>'
+      : '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h6"/></svg>';
   }
   btn.setAttribute('aria-label', antigo ? 'Ordenar: mais antigos primeiro' : 'Ordenar: mais recentes primeiro');
   btn.title = antigo
@@ -1408,7 +1408,9 @@ function buildCardHTML(dl) {
     ? `<img src="${dl.thumb}" alt="" onerror="this.style.display='none'">`
     : (ICON_THUMB[dl.status] || ICON_THUMB_FALLBACK);
 
-  const showProgress = ['baixando','processando','pendente'].includes(dl.status) || pct > 0;
+  const showProgress =
+    !['concluido', 'erro'].includes(dl.status) &&
+    (['baixando', 'processando', 'pendente'].includes(dl.status) || pct > 0);
 
   const botoesConcluido = dl.status === 'concluido'
     ? `<button type="button" class="btn-icon btn-open-folder" onclick="abrirPastaArquivo('${dl.id}')" title="Abrir pasta do arquivo">${ICON_FOLDER_BTN}</button>${

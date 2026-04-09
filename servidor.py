@@ -235,6 +235,47 @@ def outtmpl_com_nome_base(destino: str, nome_base_sem_ext: str) -> str:
     return os.path.join(destino, base + ".%(ext)s")
 
 
+def _formato_tem_video_util(f: dict) -> bool:
+    """Vídeo com resolução mínima (ignora capas / artefatos minúsculos)."""
+    vc = (f.get("vcodec") or "none").lower()
+    if vc in ("none", "", "unknown"):
+        return False
+    try:
+        w = int(f.get("width") or 0)
+        h = int(f.get("height") or 0)
+    except (TypeError, ValueError):
+        return False
+    return w >= 160 and h >= 160
+
+
+def info_e_somente_audio(info: dict | None) -> bool:
+    """True se o item não tiver faixa de vídeo útil (só música / áudio)."""
+    if not info:
+        return False
+    if info.get("_type") == "playlist":
+        return False
+    ex = (info.get("extractor") or "").lower()
+    if "soundcloud" in ex or "bandcamp" in ex:
+        return True
+    formats = info.get("formats") or []
+    if not formats:
+        vc = (info.get("vcodec") or "none").lower()
+        ac = (info.get("acodec") or "none").lower()
+        return ac != "none" and vc == "none"
+    return not any(_formato_tem_video_util(f) for f in formats)
+
+
+def info_tem_wav_ou_flac_nativo(info: dict | None) -> bool:
+    """Há formato anunciado como WAV ou FLAC (prioridade para saída em WAV)."""
+    if not info:
+        return False
+    for f in info.get("formats") or []:
+        ext = (f.get("ext") or "").lower()
+        if ext in ("wav", "flac"):
+            return True
+    return False
+
+
 # ── Estado global ─────────────────────────────────────────────────────────────
 _DIR_SERVIDOR = os.path.dirname(os.path.abspath(__file__))
 PASTA_DOWNLOAD_PADRAO = os.path.join(_DIR_SERVIDOR, "downloads")
@@ -244,7 +285,9 @@ clientes:  set = set()            # websockets conectados
 _shutdown: asyncio.Event | None = None  # preenchido em main(); encerrar_servidor
 
 
-def caminho_arquivo_baixado(ydl, info, qualidade: str) -> str:
+def caminho_arquivo_baixado(
+    ydl, info, qualidade: str, exts_audio: tuple[str, ...] | None = None
+) -> str:
     """Resolve o caminho final no disco após yt-dlp (incl. pós-processamento de áudio)."""
     if not info:
         return ""
@@ -255,16 +298,22 @@ def caminho_arquivo_baixado(ydl, info, qualidade: str) -> str:
         prepared = ydl.prepare_filename(info)
     except Exception:
         prepared = ""
-    if qualidade == "audio" and prepared:
+    if prepared:
         stem, _ = os.path.splitext(prepared)
-        mp3 = stem + ".mp3"
-        if os.path.isfile(mp3):
-            return os.path.abspath(mp3)
+        if exts_audio:
+            for ext in exts_audio:
+                cand = stem + ext
+                if os.path.isfile(cand):
+                    return os.path.abspath(cand)
+        if qualidade == "audio":
+            mp3 = stem + ".mp3"
+            if os.path.isfile(mp3):
+                return os.path.abspath(mp3)
     if prepared and os.path.isfile(prepared):
         return os.path.abspath(prepared)
     if prepared:
         stem, _ = os.path.splitext(prepared)
-        for ext in (".mp4", ".mkv", ".webm", ".m4a", ".opus", ".mp3", ".ogg"):
+        for ext in (".wav", ".flac", ".mp4", ".mkv", ".webm", ".m4a", ".opus", ".mp3", ".ogg"):
             cand = stem + ext
             if os.path.isfile(cand):
                 return os.path.abspath(cand)
@@ -418,12 +467,18 @@ async def executar_download(dl_id: str):
         ydl_opts["postprocessors"] = [{
             "key":              "FFmpegExtractAudio",
             "preferredcodec":   "mp3",
-            "preferredquality": "192",
+            "preferredquality": "0",
         }]
+
+    exts_resolver: tuple[str, ...] | None = None
+    usar_titulo_audio = False
 
     def _somente_meta():
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            meta_opts = dict(ydl_opts)
+            meta_opts["format"] = "best/best"
+            meta_opts["postprocessors"] = []
+            with yt_dlp.YoutubeDL(meta_opts) as ydl:
                 return ydl.extract_info(dl["url"], download=False)
         except Exception:
             return None
@@ -432,7 +487,36 @@ async def executar_download(dl_id: str):
     if dl_id not in downloads:
         return
     if info_meta:
-        if qualidade == "audio":
+        somente = info_e_somente_audio(info_meta)
+        if somente and qualidade == "pior":
+            ydl_opts["format"] = "worstaudio/worst"
+            ydl_opts["postprocessors"] = []
+            ydl_opts.pop("merge_output_format", None)
+            usar_titulo_audio = True
+            exts_resolver = (".opus", ".m4a", ".mp3", ".ogg", ".wav", ".flac")
+        elif somente and qualidade in ("melhor", "audio"):
+            usar_titulo_audio = True
+            if info_tem_wav_ou_flac_nativo(info_meta):
+                ydl_opts["format"] = "bestaudio[ext=wav]/bestaudio[ext=flac]/bestaudio/best"
+                ydl_opts["postprocessors"] = [{
+                    "key":              "FFmpegExtractAudio",
+                    "preferredcodec":   "wav",
+                    "preferredquality": "0",
+                }]
+                exts_resolver = (".wav", ".mp3", ".m4a", ".opus", ".flac")
+            else:
+                ydl_opts["format"] = "bestaudio/best"
+                ydl_opts["postprocessors"] = [{
+                    "key":              "FFmpegExtractAudio",
+                    "preferredcodec":   "mp3",
+                    "preferredquality": "0",
+                }]
+                exts_resolver = (".mp3", ".m4a", ".opus")
+            ydl_opts.pop("merge_output_format", None)
+        elif qualidade == "audio":
+            usar_titulo_audio = True
+
+        if usar_titulo_audio:
             titulo_m = titulo_audio_exibicao(info_meta, dl["url"])
             ydl_opts["outtmpl"] = outtmpl_com_nome_base(
                 destino, sanitizar_nome_arquivo(titulo_m)
@@ -446,12 +530,14 @@ async def executar_download(dl_id: str):
     def _baixar():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(dl["url"], download=True)
-            caminho = caminho_arquivo_baixado(ydl, info, qualidade)
+            caminho = caminho_arquivo_baixado(
+                ydl, info, qualidade, exts_audio=exts_resolver
+            )
             return info, caminho
 
     try:
         info, caminho_final = await loop.run_in_executor(None, _baixar)
-        if info and qualidade == "audio":
+        if info and (qualidade == "audio" or usar_titulo_audio):
             titulo = titulo_audio_exibicao(info, dl.get("url") or "Desconhecido")
         elif info:
             titulo = info.get("title", "Desconhecido")
