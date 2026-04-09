@@ -48,6 +48,7 @@ PASTA_DOWNLOAD_PADRAO = os.path.join(_DIR_SERVIDOR, "downloads")
 
 downloads: dict[str, dict] = {}   # id -> info do download
 clientes:  set = set()            # websockets conectados
+_shutdown: asyncio.Event | None = None  # preenchido em main(); encerrar_servidor
 
 
 def caminho_arquivo_baixado(ydl, info, qualidade: str) -> str:
@@ -344,6 +345,12 @@ async def handler(ws):
                     if arq:
                         abrir_arquivo_com_app_padrao(arq)
 
+            elif acao == "encerrar_servidor":
+                ev = _shutdown
+                if ev and not ev.is_set():
+                    await broadcast({"tipo": "servidor_encerrando"})
+                    ev.set()
+
     except websockets.exceptions.ConnectionClosed:
         pass
     finally:
@@ -352,7 +359,9 @@ async def handler(ws):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 async def main():
+    global _shutdown
     HOST, PORT = "localhost", 8765
+    _shutdown = asyncio.Event()
     print(f"""
 ╔══════════════════════════════════════════════╗
 ║      Gerenciador de Downloads  |  yt-dlp     ║
@@ -362,7 +371,8 @@ async def main():
 ╚══════════════════════════════════════════════╝
 """)
     async with websockets.serve(handler, HOST, PORT):
-        await asyncio.Future()  # roda para sempre
+        await _shutdown.wait()
+    print("[*] Servidor encerrado.")
 
 if __name__ == "__main__":
     asyncio.run(main())

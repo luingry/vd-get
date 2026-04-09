@@ -249,6 +249,12 @@
     transition: all .2s;
   }
   .btn-small:hover { border-color: var(--accent); color: var(--accent2); }
+  .btn-small.danger {
+    border-color: rgba(248,113,113,.35);
+    color: var(--red);
+  }
+  .btn-small.danger:hover { border-color: var(--red); color: #fca5a5; }
+  .btn-small:disabled { opacity: .45; cursor: not-allowed; }
 
   /* ── Download card ── */
   .dl-list {
@@ -433,6 +439,9 @@
   </div>
   <div class="header-right">
     <a class="proto-link" href="vdget://iniciar" title="Uma vez: execute instalar-protocolo.bat nesta pasta (ou importe vdget-protocol.reg)">Ligar VDGET</a>
+    <button type="button" class="btn-small danger" id="btn-parar-servidor" disabled
+      onclick="encerrarServidor()"
+      title="Encerra o processo Python (servidor WebSocket) neste computador">Parar servidor</button>
     <div class="status-ws erro" id="ws-status">● desconectado</div>
   </div>
 </header>
@@ -514,6 +523,7 @@
 <script>
 // ── WebSocket ──────────────────────────────────────────────────────────────
 let ws = null;
+let naoReconectar = false;
 const WS_URL = 'ws://localhost:8765';
 const downloads = {};
 
@@ -536,10 +546,18 @@ function conectar() {
     else if (msg.tipo === 'atualizar')       atualizarCard(msg.download);
     else if (msg.tipo === 'remover')         removerCard(msg.id);
     else if (msg.tipo === 'limpar_concluidos') msg.ids.forEach(id => removerCard(id));
+    else if (msg.tipo === 'servidor_encerrando') {
+      const lbl = document.getElementById('ws-status');
+      lbl.className = 'status-ws erro';
+      lbl.textContent = '● encerrando servidor…';
+    }
     atualizarStats();
   };
 
-  ws.onclose = () => { setStatus(false); agendarReconexao(); };
+  ws.onclose = () => {
+    setStatus(false);
+    if (!naoReconectar) agendarReconexao();
+  };
   ws.onerror = () => { setStatus(false); };
 }
 
@@ -550,16 +568,21 @@ function agendarReconexao() {
 function setStatus(ok) {
   const dot = document.getElementById('ws-dot');
   const lbl = document.getElementById('ws-status');
+  const btnParar = document.getElementById('btn-parar-servidor');
   if (ok) {
     dot.classList.remove('off');
     lbl.className = 'status-ws conectado';
     lbl.textContent = '● conectado';
     document.getElementById('btn-add').disabled = false;
+    if (btnParar) btnParar.disabled = false;
   } else {
     dot.classList.add('off');
     lbl.className = 'status-ws erro';
-    lbl.textContent = '● desconectado — reconectando...';
+    lbl.textContent = naoReconectar
+      ? '● servidor parado'
+      : '● desconectado — reconectando...';
     document.getElementById('btn-add').disabled = true;
+    if (btnParar) btnParar.disabled = true;
   }
 }
 
@@ -609,6 +632,13 @@ function abrirPastaArquivo(id) {
 
 function abrirArquivoDireto(id) {
   enviar({ acao: 'abrir_arquivo', id });
+}
+
+function encerrarServidor() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!confirm('Encerrar o servidor VDGET neste PC? Downloads em andamento serão interrompidos.')) return;
+  naoReconectar = true;
+  enviar({ acao: 'encerrar_servidor' });
 }
 
 // ── Renderização ──────────────────────────────────────────────────────────
