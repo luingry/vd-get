@@ -415,10 +415,14 @@
     flex-wrap: wrap;
     justify-content: flex-end;
   }
-  #ordenacao-concluidos {
-    padding: 4px 10px;
-    font-size: .72rem;
-    max-width: 200px;
+  #ordenacao-concluidos .ordenacao-icon {
+    font-size: 1rem;
+    line-height: 1;
+    font-weight: 600;
+  }
+  .btn-icon.btn-sort-concluidos:hover {
+    border-color: var(--accent);
+    color: var(--accent2);
   }
 
   /* ── Download card ── */
@@ -681,10 +685,9 @@
         <span class="badge" id="badge-concluidos">0</span>
       </div>
       <div class="section-actions">
-        <select id="ordenacao-concluidos" aria-label="Ordenar lista de concluídos" onchange="onOrdenacaoConcluidosChange()">
-          <option value="recente">Mais recentes primeiro</option>
-          <option value="antigo">Mais antigos primeiro</option>
-        </select>
+        <button type="button" class="btn-icon btn-sort-concluidos" id="ordenacao-concluidos" data-ordenacao="recente" aria-label="Ordenar: mais recentes primeiro" title="Mais recentes primeiro — clique para mais antigos primeiro" onclick="toggleOrdenacaoConcluidos()">
+          <span class="ordenacao-icon" aria-hidden="true">↓</span>
+        </button>
         <button type="button" class="btn-small" onclick="limparConcluidos()">Limpar todos</button>
       </div>
     </div>
@@ -1180,11 +1183,23 @@ function tsOrdenacao(dl) {
   return 0;
 }
 
+function sincronizarUIOrdenacaoConcluidos() {
+  const btn = document.getElementById('ordenacao-concluidos');
+  if (!btn) return;
+  const antigo = btn.dataset.ordenacao === 'antigo';
+  const icon = btn.querySelector('.ordenacao-icon');
+  if (icon) icon.textContent = antigo ? '↑' : '↓';
+  btn.setAttribute('aria-label', antigo ? 'Ordenar: mais antigos primeiro' : 'Ordenar: mais recentes primeiro');
+  btn.title = antigo
+    ? 'Mais antigos primeiro — clique para mais recentes primeiro'
+    : 'Mais recentes primeiro — clique para mais antigos primeiro';
+}
+
 function ordenarListaConcluidos() {
   const lista = document.getElementById('lista-concluidos');
-  const sel = document.getElementById('ordenacao-concluidos');
-  if (!lista || !sel) return;
-  const antigoPrimeiro = sel.value === 'antigo';
+  const btn = document.getElementById('ordenacao-concluidos');
+  if (!lista || !btn) return;
+  const antigoPrimeiro = btn.dataset.ordenacao === 'antigo';
   const cards = [...lista.querySelectorAll('.dl-card')];
   cards.sort((a, b) => {
     const ida = a.id.replace(/^card-/, '');
@@ -1198,22 +1213,28 @@ function ordenarListaConcluidos() {
   for (const c of cards) lista.appendChild(c);
 }
 
-function onOrdenacaoConcluidosChange() {
-  const sel = document.getElementById('ordenacao-concluidos');
-  if (!sel) return;
+function toggleOrdenacaoConcluidos() {
+  const btn = document.getElementById('ordenacao-concluidos');
+  if (!btn) return;
+  btn.dataset.ordenacao = btn.dataset.ordenacao === 'antigo' ? 'recente' : 'antigo';
   try {
-    localStorage.setItem(LS_ORDEM_CONCLUIDOS, sel.value);
+    localStorage.setItem(LS_ORDEM_CONCLUIDOS, btn.dataset.ordenacao);
   } catch (_) { /* ignore */ }
+  sincronizarUIOrdenacaoConcluidos();
   ordenarListaConcluidos();
 }
 
 function aplicarPreferenciaOrdenacaoConcluidos() {
-  const sel = document.getElementById('ordenacao-concluidos');
-  if (!sel) return;
+  const btn = document.getElementById('ordenacao-concluidos');
+  if (!btn) return;
   try {
     const v = localStorage.getItem(LS_ORDEM_CONCLUIDOS);
-    if (v === 'antigo' || v === 'recente') sel.value = v;
-  } catch (_) { /* ignore */ }
+    if (v === 'antigo' || v === 'recente') btn.dataset.ordenacao = v;
+    else btn.dataset.ordenacao = 'recente';
+  } catch (_) {
+    btn.dataset.ordenacao = 'recente';
+  }
+  sincronizarUIOrdenacaoConcluidos();
 }
 
 function abrirPastaArquivo(id) {

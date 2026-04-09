@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 from datetime import datetime
+from urllib.parse import unquote, urlparse
 
 # ── Auto-instala dependências ─────────────────────────────────────────────────
 def instalar(pacote):
@@ -64,6 +65,153 @@ def melhor_thumbnail(info: dict | None) -> str:
 
     best = max(thumbs, key=area)
     return (best.get("url") or "").strip()
+
+
+def _str_lista_ou_valor(val) -> str:
+    if val is None:
+        return ""
+    if isinstance(val, bool):
+        return ""
+    if isinstance(val, str):
+        return val.strip()
+    if isinstance(val, (list, tuple)):
+        partes = [str(x).strip() for x in val if str(x).strip()]
+        return ", ".join(partes) if partes else ""
+    return str(val).strip()
+
+
+# Primeiro segmento do path em soundcloud.com/{usuario}/… (não é o nome do artista)
+_SOUNDCLOUD_PATH_RESERVADO = frozenset({
+    "discover", "charts", "pages", "you", "feed", "likes", "popular",
+    "stations", "upload", "search", "imprint", "terms-of-use", "community-guidelines",
+})
+
+
+def artista_soundcloud_por_url(url: str) -> str:
+    """Extrai o usuário/perfil do link do SoundCloud quando os metadados vêm vazios (API/versão antiga)."""
+    if not url or "soundcloud.com" not in url.lower():
+        return ""
+    try:
+        parsed = urlparse(url.strip())
+    except ValueError:
+        return ""
+    host = (parsed.netloc or "").lower().split(":")[0]
+    if "soundcloud.com" not in host:
+        return ""
+    partes = [unquote(p) for p in parsed.path.strip("/").split("/") if p]
+    if not partes:
+        return ""
+    user = partes[0].strip()
+    if not user or user.lower() in _SOUNDCLOUD_PATH_RESERVADO:
+        return ""
+    if user.islower() or (user.isascii() and user.isalpha() and user.isupper()):
+        user = user.title()
+    return user
+
+
+def _urls_para_fallback_artista(info: dict, url_na_fila: str) -> list[str]:
+    ordem: list[str] = []
+    if info:
+        for chave in ("uploader_url", "webpage_url", "original_url", "url"):
+            v = (info.get(chave) or "").strip()
+            if v:
+                ordem.append(v)
+    v = (url_na_fila or "").strip()
+    if v and v not in ordem:
+        ordem.append(v)
+    return ordem
+
+
+def extrair_artista_metadata(info: dict, url_na_fila: str = "") -> str:
+    """Tenta obter o artista a partir dos campos que o yt-dlp preenche por plataforma."""
+    if not info:
+        info = {}
+    for chave in ("artist", "album_artist"):
+        s = _str_lista_ou_valor(info.get(chave))
+        if s:
+            return s
+    s = _str_lista_ou_valor(info.get("artists"))
+    if s:
+        return s
+    s = _str_lista_ou_valor(info.get("creator"))
+    if s:
+        return s
+    s = _str_lista_ou_valor(info.get("creators"))
+    if s:
+        return s
+    s = _str_lista_ou_valor(info.get("composer"))
+    if s:
+        return s
+    s = (info.get("uploader") or "").strip()
+    if s and s not in ("Unknown", "N/A"):
+        return s
+    s = (info.get("channel") or "").strip()
+    if s and s not in ("Unknown", "-", "N/A"):
+        return s
+    for u in _urls_para_fallback_artista(info, url_na_fila):
+        sc = artista_soundcloud_por_url(u)
+        if sc:
+            return sc
+    return ""
+
+
+def _separador_titulo_musica():
+    # hífen ASCII, en dash, em dash, figura, dois-pontos, barra vertical
+    return r"[-–—‒:｜|]+"
+
+
+def _titulo_sem_prefixo_artista(artista: str, faixa: str) -> str:
+    """Se a faixa começa com o mesmo artista + separador, devolve só o nome da música."""
+    if not artista or not faixa:
+        return faixa.strip() if faixa else ""
+    a = artista.strip()
+    f = faixa.strip()
+    if not a or not f:
+        return f
+    sep = _separador_titulo_musica()
+    pat = r"^" + re.escape(a) + r"\s*" + sep + r"\s*"
+    novo = re.sub(pat, "", f, flags=re.IGNORECASE)
+    if novo != f:
+        return novo.strip() or f
+    # "Artista feat. X - Música" com artista igual ao prefixo antes do primeiro " - "
+    return f
+
+
+def _inferir_artista_faixa_pelo_titulo(titulo: str) -> tuple[str, str]:
+    """Quando não há artista nos metadados: 'Autor - Nome' no próprio título (ex.: YouTube)."""
+    t = (titulo or "").strip()
+    if not t:
+        return "", ""
+    m = re.match(r"^(.+?)\s*" + _separador_titulo_musica() + r"\s+(.+)$", t)
+    if not m:
+        return "", t
+    art, rest = m.group(1).strip(), m.group(2).strip()
+    if not art or not rest:
+        return "", t
+    return art, rest
+
+
+def titulo_audio_exibicao(info: dict | None, url_fallback: str) -> str:
+    """Título para downloads só áudio: 'Artista - Nome do som', sem repetir artista."""
+    if not info:
+        return url_fallback
+    titulo_bruto = (info.get("title") or "").strip()
+    faixa_meta = (info.get("track") or "").strip()
+    faixa = faixa_meta or titulo_bruto or url_fallback
+
+    artista = extrair_artista_metadata(info, url_fallback)
+    if not artista:
+        a_inf, f_inf = _inferir_artista_faixa_pelo_titulo(titulo_bruto)
+        if a_inf:
+            artista = a_inf
+            if not faixa_meta:
+                faixa = _titulo_sem_prefixo_artista(artista, f_inf) or f_inf
+    else:
+        faixa = _titulo_sem_prefixo_artista(artista, faixa) or faixa
+
+    if artista:
+        return f"{artista} - {faixa}".strip()
+    return faixa or url_fallback
 
 
 # ── Estado global ─────────────────────────────────────────────────────────────
@@ -263,7 +411,10 @@ async def executar_download(dl_id: str):
     if dl_id not in downloads:
         return
     if info_meta:
-        titulo_m = (info_meta.get("title") or "").strip() or dl["url"]
+        if qualidade == "audio":
+            titulo_m = titulo_audio_exibicao(info_meta, dl["url"])
+        else:
+            titulo_m = (info_meta.get("title") or "").strip() or dl["url"]
         thumb_m = melhor_thumbnail(info_meta)
         downloads[dl_id].update({"titulo": titulo_m, "thumb": thumb_m})
         await broadcast({"tipo": "atualizar", "download": downloads[dl_id]})
@@ -276,8 +427,13 @@ async def executar_download(dl_id: str):
 
     try:
         info, caminho_final = await loop.run_in_executor(None, _baixar)
-        titulo = info.get("title", "Desconhecido") if info else "Desconhecido"
-        thumb  = info.get("thumbnail", "") if info else ""
+        if info and qualidade == "audio":
+            titulo = titulo_audio_exibicao(info, dl.get("url") or "Desconhecido")
+        elif info:
+            titulo = info.get("title", "Desconhecido")
+        else:
+            titulo = "Desconhecido"
+        thumb = info.get("thumbnail", "") if info else ""
 
         downloads[dl_id].update({
             "status":    "concluido",
