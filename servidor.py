@@ -7,6 +7,7 @@ Instale dependências: pip install websockets yt-dlp
 import asyncio
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -31,9 +32,102 @@ except ImportError:
     instalar("yt-dlp")
     import yt_dlp
 
+# ── ANSI (yt-dlp colore _speed_str, _eta_str, etc. quando o terminal suporta) ─
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text) -> str:
+    if text is None:
+        return ""
+    return ANSI_ESCAPE.sub("", str(text)).strip()
+
+
 # ── Estado global ─────────────────────────────────────────────────────────────
+_DIR_SERVIDOR = os.path.dirname(os.path.abspath(__file__))
+PASTA_DOWNLOAD_PADRAO = os.path.join(_DIR_SERVIDOR, "downloads")
+
 downloads: dict[str, dict] = {}   # id -> info do download
 clientes:  set = set()            # websockets conectados
+
+
+def caminho_arquivo_baixado(ydl, info, qualidade: str) -> str:
+    """Resolve o caminho final no disco após yt-dlp (incl. pós-processamento de áudio)."""
+    if not info:
+        return ""
+    fp = info.get("filepath")
+    if fp and os.path.isfile(fp):
+        return os.path.abspath(fp)
+    try:
+        prepared = ydl.prepare_filename(info)
+    except Exception:
+        prepared = ""
+    if qualidade == "audio" and prepared:
+        stem, _ = os.path.splitext(prepared)
+        mp3 = stem + ".mp3"
+        if os.path.isfile(mp3):
+            return os.path.abspath(mp3)
+    if prepared and os.path.isfile(prepared):
+        return os.path.abspath(prepared)
+    if prepared:
+        stem, _ = os.path.splitext(prepared)
+        for ext in (".mp4", ".mkv", ".webm", ".m4a", ".opus", ".mp3", ".ogg"):
+            cand = stem + ext
+            if os.path.isfile(cand):
+                return os.path.abspath(cand)
+    return ""
+
+
+def revelar_pasta_do_arquivo(caminho_arquivo: str) -> bool:
+    """Abre o gerenciador de arquivos na pasta do arquivo (com seleção quando o SO permite)."""
+    if not caminho_arquivo or not os.path.isfile(caminho_arquivo):
+        return False
+    caminho_arquivo = os.path.abspath(caminho_arquivo)
+    system = platform.system()
+    if system == "Windows":
+        subprocess.Popen(
+            ["explorer", "/select,", os.path.normpath(caminho_arquivo)],
+            shell=False,
+        )
+        return True
+    if system == "Darwin":
+        subprocess.run(["open", "-R", caminho_arquivo], check=False)
+        return True
+    pasta = os.path.dirname(caminho_arquivo)
+    if os.path.isdir(pasta):
+        subprocess.run(["xdg-open", pasta], check=False)
+        return True
+    return False
+
+
+def abrir_pasta(pasta: str) -> bool:
+    if not pasta or not os.path.isdir(pasta):
+        return False
+    pasta = os.path.abspath(pasta)
+    system = platform.system()
+    if system == "Windows":
+        os.startfile(pasta)
+        return True
+    if system == "Darwin":
+        subprocess.run(["open", pasta], check=False)
+        return True
+    subprocess.run(["xdg-open", pasta], check=False)
+    return True
+
+
+def abrir_arquivo_com_app_padrao(caminho: str) -> bool:
+    if not caminho or not os.path.isfile(caminho):
+        return False
+    caminho = os.path.abspath(caminho)
+    system = platform.system()
+    if system == "Windows":
+        os.startfile(caminho)
+        return True
+    if system == "Darwin":
+        subprocess.run(["open", caminho], check=False)
+        return True
+    subprocess.run(["xdg-open", caminho], check=False)
+    return True
+
 
 # ── Broadcast para todos os clientes ─────────────────────────────────────────
 async def broadcast(mensagem: dict):
@@ -52,7 +146,7 @@ async def executar_download(dl_id: str):
         "audio":  "bestaudio/best",
     }
 
-    destino   = dl.get("destino", os.path.join(os.path.expanduser("~"), "Videos", "yt-dlp"))
+    destino   = dl.get("destino", PASTA_DOWNLOAD_PADRAO)
     qualidade = dl.get("qualidade", "melhor")
     os.makedirs(destino, exist_ok=True)
 
@@ -67,7 +161,7 @@ async def executar_download(dl_id: str):
         total = d.get("total_bytes") or d.get("total_bytes_estimate")
         if baixado is not None and total and total > 0:
             return max(0.0, min(100.0, 100.0 * baixado / total))
-        raw = re.sub(r"\x1b\[[0-9;]*m", "", str(d.get("_percent_str") or "0%"))
+        raw = strip_ansi(str(d.get("_percent_str") or "0%"))
         raw = raw.replace("%", "").strip()
         try:
             return max(0.0, min(100.0, float(raw)))
@@ -81,11 +175,14 @@ async def executar_download(dl_id: str):
             downloads[dl_id].update({
                 "status":     "baixando",
                 "progresso":  pct,
-                "velocidade": d.get("_speed_str",  "...").strip(),
-                "eta":        d.get("_eta_str",    "...").strip(),
-                "baixado":    d.get("_downloaded_bytes_str", "").strip(),
-                "total":      d.get("_total_bytes_str",
-                              d.get("_total_bytes_estimate_str", "?")).strip(),
+                "velocidade": strip_ansi(d.get("_speed_str", "...")) or "...",
+                "eta":        strip_ansi(d.get("_eta_str", "...")) or "...",
+                "baixado":    strip_ansi(d.get("_downloaded_bytes_str", "")),
+                "total":      strip_ansi(
+                    d.get("_total_bytes_str")
+                    or d.get("_total_bytes_estimate_str")
+                    or "?"
+                ),
             })
             asyncio.run_coroutine_threadsafe(
                 broadcast({"tipo": "atualizar", "download": downloads[dl_id]}),
@@ -119,6 +216,7 @@ async def executar_download(dl_id: str):
         "progress_hooks":                [hook],
         "quiet":                         True,
         "no_warnings":                   True,
+        "color":                         "never",
         "postprocessors":                [],
     }
 
@@ -131,10 +229,12 @@ async def executar_download(dl_id: str):
 
     def _baixar():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            return ydl.extract_info(dl["url"], download=True)
+            info = ydl.extract_info(dl["url"], download=True)
+            caminho = caminho_arquivo_baixado(ydl, info, qualidade)
+            return info, caminho
 
     try:
-        info = await loop.run_in_executor(None, _baixar)
+        info, caminho_final = await loop.run_in_executor(None, _baixar)
         titulo = info.get("title", "Desconhecido") if info else "Desconhecido"
         thumb  = info.get("thumbnail", "") if info else ""
 
@@ -146,6 +246,7 @@ async def executar_download(dl_id: str):
             "velocidade": "",
             "eta":        "",
             "fim":        datetime.now().strftime("%H:%M:%S"),
+            "arquivo":   caminho_final or "",
         })
 
     except Exception as e:
@@ -184,7 +285,7 @@ async def handler(ws):
                 destino   = dados.get("destino", "")
 
                 if not destino:
-                    destino = os.path.join(os.path.expanduser("~"), "Videos", "yt-dlp")
+                    destino = PASTA_DOWNLOAD_PADRAO
 
                 for url in urls:
                     url = url.strip()
@@ -206,6 +307,7 @@ async def handler(ws):
                         "inicio":     datetime.now().strftime("%H:%M:%S"),
                         "fim":        "",
                         "erro":       "",
+                        "arquivo":    "",
                     }
                     await broadcast({"tipo": "adicionar", "download": downloads[dl_id]})
                     asyncio.create_task(executar_download(dl_id))
@@ -223,6 +325,24 @@ async def handler(ws):
                 for k in removidos:
                     del downloads[k]
                 await broadcast({"tipo": "limpar_concluidos", "ids": removidos})
+
+            elif acao == "abrir_pasta_arquivo":
+                dl_id = dados.get("id")
+                if dl_id in downloads:
+                    d = downloads[dl_id]
+                    arq = (d.get("arquivo") or "").strip()
+                    dest = (d.get("destino") or "").strip()
+                    if arq and os.path.isfile(arq):
+                        revelar_pasta_do_arquivo(arq)
+                    elif dest:
+                        abrir_pasta(dest)
+
+            elif acao == "abrir_arquivo":
+                dl_id = dados.get("id")
+                if dl_id in downloads:
+                    arq = (downloads[dl_id].get("arquivo") or "").strip()
+                    if arq:
+                        abrir_arquivo_com_app_padrao(arq)
 
     except websockets.exceptions.ConnectionClosed:
         pass

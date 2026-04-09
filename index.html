@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>VDGET — Gerenciador de Downloads</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg:        #0a0a0f;
@@ -20,6 +20,8 @@
     --red:       #f87171;
     --cyan:      #22d3ee;
     --radius:    10px;
+    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', monospace;
   }
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -27,7 +29,11 @@
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: 'Syne', sans-serif;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    font-feature-settings: "kern" 1, "liga" 1;
+    -webkit-font-smoothing: antialiased;
     min-height: 100vh;
     overflow-x: hidden;
   }
@@ -57,8 +63,8 @@
 
   .logo {
     font-size: 1.5rem;
-    font-weight: 800;
-    letter-spacing: -.02em;
+    font-weight: 700;
+    letter-spacing: -.015em;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -78,7 +84,7 @@
   }
 
   .status-ws {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono);
     font-size: .72rem;
     color: var(--muted);
     display: flex; align-items: center; gap: 6px;
@@ -109,7 +115,7 @@
 
   .add-box h2 {
     font-size: .8rem;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono);
     text-transform: uppercase;
     letter-spacing: .1em;
     color: var(--accent2);
@@ -121,7 +127,7 @@
     border: 1px solid var(--border2);
     border-radius: var(--radius);
     color: var(--text);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono);
     font-size: .85rem;
     padding: 14px 16px;
     resize: vertical;
@@ -145,7 +151,7 @@
     border: 1px solid var(--border2);
     border-radius: var(--radius);
     color: var(--text);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono);
     font-size: .82rem;
     padding: 10px 14px;
     outline: none;
@@ -161,7 +167,7 @@
     border: 1px solid var(--border2);
     border-radius: var(--radius);
     color: var(--text);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono);
     font-size: .82rem;
     padding: 10px 14px;
     outline: none;
@@ -175,9 +181,9 @@
     color: #fff;
     border: none;
     border-radius: var(--radius);
-    font-family: 'Syne', sans-serif;
+    font-family: var(--font-sans);
     font-size: .88rem;
-    font-weight: 700;
+    font-weight: 600;
     padding: 10px 24px;
     cursor: pointer;
     transition: background .2s, transform .1s;
@@ -196,7 +202,7 @@
   }
   .section-title {
     font-size: .75rem;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono);
     text-transform: uppercase;
     letter-spacing: .12em;
     color: var(--muted);
@@ -349,6 +355,8 @@
     transition: all .15s;
   }
   .btn-icon:hover { border-color: var(--red); color: var(--red); }
+  .btn-icon.btn-open-folder:hover { border-color: var(--cyan); color: var(--cyan); }
+  .btn-icon.btn-open-file:hover { border-color: var(--green); color: var(--green); }
 
   /* ── Empty state ── */
   .empty {
@@ -438,7 +446,7 @@
         <option value="pior">⬇ Menor tamanho</option>
         <option value="audio">🎵 Somente áudio (MP3)</option>
       </select>
-      <input type="text" id="input-destino" placeholder="Pasta destino (vazio = ~/Videos/yt-dlp)">
+      <input type="text" id="input-destino" placeholder="Pasta destino (vazio = pasta downloads/ ao lado do servidor)">
       <button class="btn-add" id="btn-add" onclick="adicionarDownloads()">
         ↓ Iniciar Download
       </button>
@@ -570,6 +578,14 @@ function removerItem(id) {
 
 function limparConcluidos() {
   enviar({ acao: 'limpar_concluidos' });
+}
+
+function abrirPastaArquivo(id) {
+  enviar({ acao: 'abrir_pasta_arquivo', id });
+}
+
+function abrirArquivoDireto(id) {
+  enviar({ acao: 'abrir_arquivo', id });
 }
 
 // ── Renderização ──────────────────────────────────────────────────────────
@@ -705,6 +721,14 @@ function buildCardHTML(dl) {
 
   const showProgress = ['baixando','processando','pendente'].includes(dl.status) || pct > 0;
 
+  const botoesConcluido = dl.status === 'concluido'
+    ? `<button type="button" class="btn-icon btn-open-folder" onclick="abrirPastaArquivo('${dl.id}')" title="Abrir pasta do arquivo">📂</button>${
+        dl.arquivo
+          ? `<button type="button" class="btn-icon btn-open-file" onclick="abrirArquivoDireto('${dl.id}')" title="Abrir arquivo">▶</button>`
+          : ''
+      }`
+    : '';
+
   return `
     <div class="dl-thumb" data-status="${dl.status}">${thumbContent}</div>
     <div class="dl-body">
@@ -719,7 +743,8 @@ function buildCardHTML(dl) {
       </div>` : ''}
     </div>
     <div class="dl-actions">
-      <button class="btn-icon" onclick="removerItem('${dl.id}')" title="Remover">✕</button>
+      ${botoesConcluido}
+      <button type="button" class="btn-icon" onclick="removerItem('${dl.id}')" title="Remover">✕</button>
     </div>
   `;
 }
