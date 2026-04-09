@@ -11,6 +11,7 @@ import platform
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from datetime import datetime
@@ -372,6 +373,59 @@ def abrir_arquivo_com_app_padrao(caminho: str) -> bool:
     return True
 
 
+def _subprocess_flags_windows_silencioso() -> int:
+    if sys.platform == "win32":
+        return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return 0
+
+
+def matar_instancias_terminal_vdget_windows():
+    """
+    Encerra janelas do launcher (cmd em pause) e outros Python que executam
+    este mesmo servidor.py. Não mata o processo atual (evita suicídio antes do shutdown).
+    """
+    if platform.system() != "Windows":
+        return
+    fl = _subprocess_flags_windows_silencioso()
+    subprocess.run(
+        ["taskkill", "/FI", "WINDOWTITLE eq VDGET - Gerenciador de Downloads", "/F"],
+        capture_output=True,
+        creationflags=fl,
+    )
+    script_path = os.path.abspath(__file__)
+    me = os.getpid()
+    ps_body = (
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        f"$me = {me}\n"
+        f"$p = @'\n{script_path}\n'@\n"
+        "Get-CimInstance Win32_Process | Where-Object {\n"
+        "  $_.CommandLine -and $_.ProcessId -ne $me -and $_.CommandLine.Contains($p)\n"
+        "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }\n"
+    )
+
+    fd, ps_path = tempfile.mkstemp(suffix=".ps1", text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8-sig", newline="\n") as f:
+            f.write(ps_body)
+        subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                ps_path,
+            ],
+            capture_output=True,
+            creationflags=fl,
+        )
+    finally:
+        try:
+            os.unlink(ps_path)
+        except OSError:
+            pass
+
+
 # ── Broadcast para todos os clientes ─────────────────────────────────────────
 async def broadcast(mensagem: dict):
     if clientes:
@@ -660,6 +714,7 @@ async def handler(ws):
                 ev = _shutdown
                 if ev and not ev.is_set():
                     await broadcast({"tipo": "servidor_encerrando"})
+                    matar_instancias_terminal_vdget_windows()
                     ev.set()
 
     except websockets.exceptions.ConnectionClosed:

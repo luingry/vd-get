@@ -59,6 +59,16 @@ if errorlevel 1 (
 )
 echo  [OK] Dependencias prontas.
 
+rem --- Fecha instancias anteriores (outros launchers + consoles do servidor) ---
+rem     Troca o titulo desta janela para nao ser morta pelo taskkill seguinte.
+title VDGET - A iniciar...
+echo.
+echo  [*] Encerrando instancias anteriores do VDGET (se existirem)...
+taskkill /FI "WINDOWTITLE eq VDGET Servidor" /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq VDGET - Gerenciador de Downloads" /F >nul 2>&1
+timeout /t 1 /nobreak >nul
+title VDGET - Gerenciador de Downloads
+
 rem --- Inicia servidor em background e abre navegador ---
 echo.
 echo  [*] Iniciando servidor WebSocket...
@@ -67,7 +77,8 @@ start "VDGET Servidor" /min %PY_EXE% %PY_ARGS% "%~dp0servidor.py"
 timeout /t 2 >nul
 
 echo  [*] Abrindo interface no navegador...
-start "" "%~dp0index.html"
+%PY_EXE% %PY_ARGS% "%~dp0abrir_interface.py" "%~dp0index.html"
+if errorlevel 1 start "" "%~dp0index.html"
 
 echo.
 echo  ============================================================
@@ -79,6 +90,7 @@ echo.
 echo  Pressione qualquer tecla para ENCERRAR o servidor.
 pause >nul
 
-taskkill /fi "WindowTitle eq VDGET Servidor" /f >nul 2>&1
+rem --- Encerra todos os consoles minimizados do Python (titulo VDGET Servidor) ---
+taskkill /FI "WINDOWTITLE eq VDGET Servidor" /F >nul 2>&1
 echo  [OK] Servidor encerrado.
 timeout /t 1 >nul
