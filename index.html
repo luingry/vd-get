@@ -549,7 +549,21 @@
     to   { transform: translateX(200%); }
   }
 
-  .dl-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .dl-actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
+
+  /* Pasta / abrir arquivo / remover: ocultos até hover (ou foco no card); touch sem hover mantém visíveis */
+  @media (hover: hover) {
+    .dl-card .dl-actions .btn-icon {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .15s ease, border-color .15s, color .15s, transform .1s;
+    }
+    .dl-card:hover .dl-actions .btn-icon,
+    .dl-card:focus-within .dl-actions .btn-icon {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
 
   .btn-icon {
     background: transparent;
@@ -704,7 +718,9 @@ const LS_CAMINHOS = 'vdget_caminhos_v1';
 const LS_LEGACY_DESTINOS = 'vdget_destinos';
 const LS_LEGACY_PADRAO = 'vdget_destino_padrao';
 const LS_ORDEM_CONCLUIDOS = 'vdget_ordem_concluidos';
+const LS_HISTORICO_CONCLUIDOS = 'vdget_historico_concluidos_v1';
 const MAX_DESTINOS_SALVOS = 30;
+const MAX_HISTORICO_CONCLUIDOS = 300;
 const DESTINO_BUILTIN = '/downloads';
 
 function dedupePathsManterOrdem(arr) {
@@ -1123,14 +1139,51 @@ function enviar(dados) {
   }
 }
 
+function historicoConcluidosParaSalvar() {
+  return Object.values(downloads).filter(
+    d => d && (d.status === 'concluido' || d.status === 'erro')
+  );
+}
+
+function salvarHistoricoConcluidosNoLS() {
+  const items = historicoConcluidosParaSalvar();
+  items.sort((a, b) => tsOrdenacao(b) - tsOrdenacao(a));
+  const trimmed = items.slice(0, MAX_HISTORICO_CONCLUIDOS);
+  try {
+    localStorage.setItem(LS_HISTORICO_CONCLUIDOS, JSON.stringify({ v: 1, items: trimmed }));
+  } catch (_) { /* quota ou desativado */ }
+}
+
+function restaurarHistoricoConcluidosDoLS() {
+  try {
+    const raw = localStorage.getItem(LS_HISTORICO_CONCLUIDOS);
+    if (!raw) return;
+    const o = JSON.parse(raw);
+    if (!o || o.v !== 1 || !Array.isArray(o.items)) return;
+    for (const dl of o.items) {
+      if (!dl || typeof dl.id !== 'string') continue;
+      if (dl.status !== 'concluido' && dl.status !== 'erro') continue;
+      if (downloads[dl.id]) continue;
+      downloads[dl.id] = dl;
+      renderCard(dl);
+    }
+    ordenarListaConcluidos();
+    verificarEmpties();
+    atualizarStats();
+  } catch (_) { /* JSON inválido */ }
+}
+
 // ── Estado ────────────────────────────────────────────────────────────────
 function carregarEstado(lista) {
   lista.forEach(dl => {
+    const cur = document.getElementById(`card-${dl.id}`);
+    if (cur) cur.remove();
     downloads[dl.id] = dl;
     renderCard(dl);
   });
   ordenarListaConcluidos();
   atualizarStats();
+  verificarEmpties();
 }
 
 // ── Ações ─────────────────────────────────────────────────────────────────
@@ -1286,6 +1339,7 @@ function adicionarCard(dl) {
   downloads[dl.id] = dl;
   renderCard(dl);
   atualizarStats();
+  if (dl.status === 'concluido' || dl.status === 'erro') salvarHistoricoConcluidosNoLS();
 }
 
 function pctBarra(dl) {
@@ -1310,6 +1364,7 @@ function atualizarCard(dl) {
     ordenarListaConcluidos();
     verificarEmpties();
     atualizarStats();
+    if (statusNovo === 'concluido' || statusNovo === 'erro') salvarHistoricoConcluidosNoLS();
     return;
   }
 
@@ -1377,6 +1432,7 @@ function atualizarCard(dl) {
   card.dataset.status = dl.status;
   card.innerHTML = buildCardHTML(dl);
   atualizarStats();
+  if (dl.status === 'concluido' || dl.status === 'erro') salvarHistoricoConcluidosNoLS();
 }
 
 function removerCard(id) {
@@ -1386,7 +1442,14 @@ function removerCard(id) {
     card.style.opacity = '0';
     card.style.transform = 'translateX(20px)';
     card.style.transition = 'all .2s';
-    setTimeout(() => { card.remove(); verificarEmpties(); atualizarStats(); }, 200);
+    setTimeout(() => {
+      card.remove();
+      verificarEmpties();
+      atualizarStats();
+      salvarHistoricoConcluidosNoLS();
+    }, 200);
+  } else {
+    salvarHistoricoConcluidosNoLS();
   }
 }
 
@@ -1479,6 +1542,7 @@ document.getElementById('input-urls').addEventListener('keydown', (e) => {
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────
+restaurarHistoricoConcluidosDoLS();
 initDestinoCombobox();
 aplicarPreferenciaOrdenacaoConcluidos();
 

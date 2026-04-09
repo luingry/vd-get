@@ -627,6 +627,8 @@ async def handler(ws):
                 dl_id = dados.get("id")
                 if dl_id in downloads:
                     del downloads[dl_id]
+                # Notifica mesmo sem entrada no servidor (histórico só no localStorage do cliente).
+                if dl_id:
                     await broadcast({"tipo": "remover", "id": dl_id})
 
             # ── Limpar concluídos ────────────────────────────────────
