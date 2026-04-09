@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VDGET — Gerenciador de Downloads</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0a0f;
+    --surface:   #111118;
+    --border:    #1e1e2e;
+    --border2:   #2a2a3e;
+    --text:      #e2e2f0;
+    --muted:     #6b6b8a;
+    --accent:    #7c6af7;
+    --accent2:   #a78bfa;
+    --green:     #34d399;
+    --yellow:    #fbbf24;
+    --red:       #f87171;
+    --cyan:      #22d3ee;
+    --radius:    10px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Grain overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9999;
+    opacity: .5;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 24px 40px;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0;
+    background: rgba(10,10,15,.92);
+    backdrop-filter: blur(12px);
+    z-index: 100;
+  }
+
+  .logo {
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: -.02em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .logo span { color: var(--accent); }
+  .logo-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+  .logo-dot.off { background: var(--red); animation: none; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(52,211,153,.4); }
+    50%       { opacity: .7; box-shadow: 0 0 0 6px rgba(52,211,153,0); }
+  }
+
+  .status-ws {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .72rem;
+    color: var(--muted);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .status-ws.conectado { color: var(--green); }
+  .status-ws.erro      { color: var(--red); }
+
+  /* ── Layout ── */
+  main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 36px 24px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  /* ── Add box ── */
+  .add-box {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 14px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .add-box h2 {
+    font-size: .8rem;
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--accent2);
+  }
+
+  textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .85rem;
+    padding: 14px 16px;
+    resize: vertical;
+    min-height: 80px;
+    outline: none;
+    transition: border-color .2s;
+    line-height: 1.6;
+  }
+  textarea:focus { border-color: var(--accent); }
+  textarea::placeholder { color: var(--muted); }
+
+  .add-controls {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  select {
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .82rem;
+    padding: 10px 14px;
+    outline: none;
+    cursor: pointer;
+    transition: border-color .2s;
+  }
+  select:focus { border-color: var(--accent); }
+
+  input[type="text"] {
+    flex: 1;
+    min-width: 200px;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .82rem;
+    padding: 10px 14px;
+    outline: none;
+    transition: border-color .2s;
+  }
+  input[type="text"]:focus { border-color: var(--accent); }
+  input[type="text"]::placeholder { color: var(--muted); }
+
+  .btn-add {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    font-family: 'Syne', sans-serif;
+    font-size: .88rem;
+    font-weight: 700;
+    padding: 10px 24px;
+    cursor: pointer;
+    transition: background .2s, transform .1s;
+    white-space: nowrap;
+  }
+  .btn-add:hover   { background: var(--accent2); }
+  .btn-add:active  { transform: scale(.97); }
+  .btn-add:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ── Section header ── */
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .section-title {
+    font-size: .75rem;
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title .badge {
+    background: var(--border2);
+    color: var(--text);
+    border-radius: 20px;
+    padding: 2px 8px;
+    font-size: .7rem;
+  }
+  .btn-small {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .72rem;
+    background: transparent;
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    color: var(--muted);
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all .2s;
+  }
+  .btn-small:hover { border-color: var(--accent); color: var(--accent2); }
+
+  /* ── Download card ── */
+  .dl-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .dl-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    display: grid;
+    grid-template-columns: 48px 1fr auto;
+    gap: 14px;
+    align-items: center;
+    animation: slideIn .25s ease;
+    transition: border-color .2s;
+  }
+  .dl-card:hover { border-color: var(--border2); }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .dl-thumb {
+    width: 48px; height: 36px;
+    border-radius: 6px;
+    object-fit: cover;
+    background: var(--border2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .dl-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+  .dl-body { min-width: 0; }
+
+  .dl-title {
+    font-size: .88rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 6px;
+  }
+
+  .dl-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .dl-status {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .7rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+  }
+  .dl-status.pendente    { background: rgba(251,191,36,.12);  color: var(--yellow); }
+  .dl-status.baixando    { background: rgba(124,106,247,.15); color: var(--accent2); }
+  .dl-status.processando { background: rgba(34,211,238,.12);  color: var(--cyan); }
+  .dl-status.concluido   { background: rgba(52,211,153,.12);  color: var(--green); }
+  .dl-status.erro        { background: rgba(248,113,113,.12); color: var(--red); }
+
+  .dl-info {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .7rem;
+    color: var(--muted);
+  }
+  .dl-info b { color: var(--cyan); font-weight: 600; }
+
+  /* Progress bar */
+  .dl-progress-wrap {
+    margin-top: 8px;
+    height: 3px;
+    background: var(--border2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .dl-progress-bar {
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--cyan));
+    transition: width .4s ease;
+    position: relative;
+  }
+  .dl-progress-bar.concluido { background: var(--green); }
+  .dl-progress-bar.erro      { background: var(--red); }
+
+  /* Shimmer while downloading */
+  .dl-progress-bar.baixando::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.25) 50%, transparent 100%);
+    animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(200%); }
+  }
+
+  .dl-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+  .btn-icon {
+    background: transparent;
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    color: var(--muted);
+    width: 30px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    font-size: .85rem;
+    transition: all .15s;
+  }
+  .btn-icon:hover { border-color: var(--red); color: var(--red); }
+
+  /* ── Empty state ── */
+  .empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .8rem;
+    border: 1px dashed var(--border2);
+    border-radius: 12px;
+  }
+  .empty .icon { font-size: 2rem; margin-bottom: 10px; opacity: .4; }
+
+  /* ── Stats bar ── */
+  .stats {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .stat-val {
+    font-size: 1.6rem;
+    font-weight: 800;
+    line-height: 1;
+  }
+  .stat-val.a { color: var(--accent2); }
+  .stat-val.b { color: var(--cyan); }
+  .stat-val.c { color: var(--green); }
+  .stat-val.d { color: var(--red); }
+  .stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .68rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot off" id="ws-dot"></div>
+    <span>VD</span>GET
+  </div>
+  <div class="status-ws erro" id="ws-status">● desconectado</div>
+</header>
+
+<main>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-val a" id="stat-baixando">0</div>
+      <div class="stat-label">Baixando</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val b" id="stat-pendente">0</div>
+      <div class="stat-label">Pendentes</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val c" id="stat-concluido">0</div>
+      <div class="stat-label">Concluídos</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val d" id="stat-erro">0</div>
+      <div class="stat-label">Com erro</div>
+    </div>
+  </div>
+
+  <!-- Add box -->
+  <div class="add-box">
+    <h2>// Adicionar downloads</h2>
+    <textarea id="input-urls" placeholder="Cole um ou mais links aqui (um por linha)&#10;https://youtube.com/watch?v=...&#10;https://twitter.com/..."></textarea>
+    <div class="add-controls">
+      <select id="select-qualidade">
+        <option value="melhor">⬆ Melhor qualidade</option>
+        <option value="pior">⬇ Menor tamanho</option>
+        <option value="audio">🎵 Somente áudio (MP3)</option>
+      </select>
+      <input type="text" id="input-destino" placeholder="Pasta destino (vazio = ~/Videos/yt-dlp)">
+      <button class="btn-add" id="btn-add" onclick="adicionarDownloads()">
+        ↓ Iniciar Download
+      </button>
+    </div>
+  </div>
+
+  <!-- Ativos (baixando + pendentes) -->
+  <div>
+    <div class="section-header">
+      <div class="section-title">
+        Fila ativa
+        <span class="badge" id="badge-ativos">0</span>
+      </div>
+    </div>
+    <div class="dl-list" id="lista-ativos">
+      <div class="empty" id="empty-ativos">
+        <div class="icon">📭</div>
+        Nenhum download na fila
+      </div>
+    </div>
+  </div>
+
+  <!-- Concluídos -->
+  <div>
+    <div class="section-header">
+      <div class="section-title">
+        Concluídos
+        <span class="badge" id="badge-concluidos">0</span>
+      </div>
+      <button class="btn-small" onclick="limparConcluidos()">Limpar todos</button>
+    </div>
+    <div class="dl-list" id="lista-concluidos">
+      <div class="empty" id="empty-concluidos">
+        <div class="icon">✅</div>
+        Nenhum download concluído ainda
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ── WebSocket ──────────────────────────────────────────────────────────────
+let ws = null;
+const WS_URL = 'ws://localhost:8765';
+const downloads = {};
+
+function conectar() {
+  try {
+    ws = new WebSocket(WS_URL);
+  } catch(e) {
+    agendarReconexao(); return;
+  }
+
+  ws.onopen = () => {
+    setStatus(true);
+    console.log('[WS] Conectado');
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if      (msg.tipo === 'estado_inicial')  carregarEstado(msg.downloads);
+    else if (msg.tipo === 'adicionar')       adicionarCard(msg.download);
+    else if (msg.tipo === 'atualizar')       atualizarCard(msg.download);
+    else if (msg.tipo === 'remover')         removerCard(msg.id);
+    else if (msg.tipo === 'limpar_concluidos') msg.ids.forEach(id => removerCard(id));
+    atualizarStats();
+  };
+
+  ws.onclose = () => { setStatus(false); agendarReconexao(); };
+  ws.onerror = () => { setStatus(false); };
+}
+
+function agendarReconexao() {
+  setTimeout(conectar, 3000);
+}
+
+function setStatus(ok) {
+  const dot = document.getElementById('ws-dot');
+  const lbl = document.getElementById('ws-status');
+  if (ok) {
+    dot.classList.remove('off');
+    lbl.className = 'status-ws conectado';
+    lbl.textContent = '● conectado';
+    document.getElementById('btn-add').disabled = false;
+  } else {
+    dot.classList.add('off');
+    lbl.className = 'status-ws erro';
+    lbl.textContent = '● desconectado — reconectando...';
+    document.getElementById('btn-add').disabled = true;
+  }
+}
+
+function enviar(dados) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(dados));
+  }
+}
+
+// ── Estado ────────────────────────────────────────────────────────────────
+function carregarEstado(lista) {
+  lista.forEach(dl => {
+    downloads[dl.id] = dl;
+    renderCard(dl);
+  });
+  atualizarStats();
+}
+
+// ── Ações ─────────────────────────────────────────────────────────────────
+function adicionarDownloads() {
+  const urls = document.getElementById('input-urls').value
+    .split('\n').map(s => s.trim()).filter(Boolean);
+
+  if (!urls.length) return;
+
+  enviar({
+    acao:      'adicionar',
+    urls,
+    qualidade: document.getElementById('select-qualidade').value,
+    destino:   document.getElementById('input-destino').value.trim(),
+  });
+
+  document.getElementById('input-urls').value = '';
+}
+
+function removerItem(id) {
+  enviar({ acao: 'remover', id });
+}
+
+function limparConcluidos() {
+  enviar({ acao: 'limpar_concluidos' });
+}
+
+// ── Renderização ──────────────────────────────────────────────────────────
+const ICONES = {
+  pendente:    '⏳',
+  baixando:    '⬇',
+  processando: '⚙',
+  concluido:   '✓',
+  erro:        '✕',
+};
+
+function listaAlvo(status) {
+  return ['concluido', 'erro'].includes(status)
+    ? document.getElementById('lista-concluidos')
+    : document.getElementById('lista-ativos');
+}
+
+function renderCard(dl) {
+  const lista = listaAlvo(dl.status);
+  ocultarEmpty(lista);
+
+  const card = document.createElement('div');
+  card.className = 'dl-card';
+  card.id = `card-${dl.id}`;
+  card.innerHTML = buildCardHTML(dl);
+  lista.appendChild(card);
+}
+
+function adicionarCard(dl) {
+  downloads[dl.id] = dl;
+  renderCard(dl);
+  atualizarStats();
+}
+
+function atualizarCard(dl) {
+  downloads[dl.id] = dl;
+  const card = document.getElementById(`card-${dl.id}`);
+  if (!card) return;
+
+  const statusOld = card.dataset.status;
+  const statusNovo = dl.status;
+
+  // Se mudou de lista (ex: baixando -> concluido), re-renderiza
+  if (statusOld !== statusNovo &&
+      (['concluido','erro'].includes(statusNovo) !== ['concluido','erro'].includes(statusOld))) {
+    card.remove();
+    renderCard(dl);
+    verificarEmpties();
+    atualizarStats();
+    return;
+  }
+
+  card.dataset.status = dl.status;
+  card.innerHTML = buildCardHTML(dl);
+  atualizarStats();
+}
+
+function removerCard(id) {
+  delete downloads[id];
+  const card = document.getElementById(`card-${id}`);
+  if (card) {
+    card.style.opacity = '0';
+    card.style.transform = 'translateX(20px)';
+    card.style.transition = 'all .2s';
+    setTimeout(() => { card.remove(); verificarEmpties(); atualizarStats(); }, 200);
+  }
+}
+
+function buildCardHTML(dl) {
+  const pct       = dl.progresso || 0;
+  const barClass  = dl.status === 'concluido' ? 'concluido'
+                  : dl.status === 'erro'      ? 'erro'
+                  : dl.status === 'baixando'  ? 'baixando' : '';
+
+  const infoExtra = dl.status === 'baixando'
+    ? `<span class="dl-info"><b>${dl.velocidade || ''}</b>  ${dl.baixado || ''}/${dl.total || ''}  ETA ${dl.eta || ''}</span>`
+    : dl.status === 'erro'
+    ? `<span class="dl-info" style="color:var(--red)">${dl.erro || 'Erro desconhecido'}</span>`
+    : dl.status === 'concluido'
+    ? `<span class="dl-info">concluído às ${dl.fim || ''}</span>`
+    : '';
+
+  const thumbContent = dl.thumb
+    ? `<img src="${dl.thumb}" alt="" onerror="this.style.display='none'">`
+    : ICONES[dl.status] || '📦';
+
+  const showProgress = ['baixando','processando','pendente'].includes(dl.status) || pct > 0;
+
+  return `
+    <div class="dl-thumb" data-status="${dl.status}">${thumbContent}</div>
+    <div class="dl-body">
+      <div class="dl-title" title="${escHtml(dl.url)}">${escHtml(dl.titulo || dl.url)}</div>
+      <div class="dl-meta">
+        <span class="dl-status ${dl.status}">${dl.status}</span>
+        ${infoExtra}
+      </div>
+      ${showProgress ? `
+      <div class="dl-progress-wrap">
+        <div class="dl-progress-bar ${barClass}" style="width:${pct}%"></div>
+      </div>` : ''}
+    </div>
+    <div class="dl-actions">
+      <button class="btn-icon" onclick="removerItem('${dl.id}')" title="Remover">✕</button>
+    </div>
+  `;
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ── Empties ───────────────────────────────────────────────────────────────
+function ocultarEmpty(lista) {
+  const e = lista.querySelector('.empty');
+  if (e) e.style.display = 'none';
+}
+
+function verificarEmpties() {
+  ['lista-ativos','lista-concluidos'].forEach(id => {
+    const lista  = document.getElementById(id);
+    const cards  = lista.querySelectorAll('.dl-card');
+    const empty  = lista.querySelector('.empty');
+    if (empty) empty.style.display = cards.length ? 'none' : 'block';
+  });
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────
+function atualizarStats() {
+  const vals = { baixando: 0, pendente: 0, concluido: 0, erro: 0, processando: 0 };
+  Object.values(downloads).forEach(d => {
+    if (vals[d.status] !== undefined) vals[d.status]++;
+  });
+
+  document.getElementById('stat-baixando').textContent  = vals.baixando + vals.processando;
+  document.getElementById('stat-pendente').textContent  = vals.pendente;
+  document.getElementById('stat-concluido').textContent = vals.concluido;
+  document.getElementById('stat-erro').textContent      = vals.erro;
+
+  const ativos = vals.baixando + vals.processando + vals.pendente;
+  document.getElementById('badge-ativos').textContent     = ativos;
+  document.getElementById('badge-concluidos').textContent = vals.concluido + vals.erro;
+}
+
+// ── Enter no textarea ─────────────────────────────────────────────────────
+document.getElementById('input-urls').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.ctrlKey) adicionarDownloads();
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────
+conectar();
+</script>
+</body>
+</html>
