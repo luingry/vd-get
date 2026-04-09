@@ -290,6 +290,33 @@
   .destino-opt.ativo .destino-opt-hint {
     color: var(--accent2);
   }
+  .destino-opt-remove {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    margin: -4px 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .12s, color .12s, background .12s;
+  }
+  .destino-opt:hover .destino-opt-remove {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .destino-opt-remove:hover {
+    color: var(--red);
+    background: rgba(248, 113, 113, .12);
+  }
 
   select {
     background: var(--bg);
@@ -605,7 +632,7 @@
       </select>
       <div class="destino-combobox" id="destino-combobox">
         <div class="destino-input-wrap">
-          <input type="text" id="input-destino" placeholder="Ao abrir a lista o campo esvazia para buscar; fora do foco mostra o selecionado"
+          <input type="text" id="input-destino" placeholder="Digite para buscar ou inserir um novo diretório"
             autocomplete="off" spellcheck="false" aria-autocomplete="list" aria-controls="destino-dropdown"
             aria-expanded="false" role="combobox">
         </div>
@@ -782,6 +809,24 @@ function registrarDestinoUsado(path) {
   renderDestinoDropdown();
 }
 
+function removerDestinoDaLista(p) {
+  const path = String(p || '').trim();
+  if (!path || path === DESTINO_BUILTIN) return;
+  const cur = lerDestinoState();
+  if (!cur.paths.includes(path)) return;
+  let padrao = cur.padrao;
+  if (padrao === path) padrao = DESTINO_BUILTIN;
+  const paths = cur.paths.filter(x => x !== path);
+  gravarDestinoState({ paths, padrao });
+  if (destinoCommitted.trim() === path) {
+    destinoCommitted = getDestinoPadrao();
+    destinoFilterManual = '';
+    const inp = document.getElementById('input-destino');
+    if (inp) inp.value = destinoCommitted;
+  }
+  renderDestinoDropdown();
+}
+
 function getDestinoPadrao() {
   return lerDestinoState().padrao;
 }
@@ -841,8 +886,25 @@ function appendDestinoDropdownRow(dd, p, padrao) {
   row.appendChild(pathSpan);
   row.appendChild(hint);
 
+  if (p !== DESTINO_BUILTIN) {
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'destino-opt-remove';
+    removeBtn.textContent = '×';
+    removeBtn.title = 'Remover da lista';
+    removeBtn.setAttribute('aria-label', `Remover ${p} da lista`);
+    removeBtn.setAttribute('tabindex', '-1');
+    removeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removerDestinoDaLista(p);
+    });
+    row.appendChild(removeBtn);
+  }
+
   row.addEventListener('mousedown', (e) => {
     if (e.target.closest('button.destino-opt-star')) return;
+    if (e.target.closest('button.destino-opt-remove')) return;
     e.preventDefault();
     destinoCommitted = p;
     destinoFilterManual = '';
