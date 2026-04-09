@@ -165,6 +165,117 @@
     flex-wrap: wrap;
     align-items: center;
   }
+  .add-controls > select#select-qualidade {
+    flex: 0 0 auto;
+  }
+  .add-controls .btn-add {
+    flex: 0 0 auto;
+  }
+
+  .destino-combobox {
+    position: relative;
+    flex: 1 1 200px;
+    min-width: 160px;
+    max-width: 100%;
+  }
+  .destino-input-wrap {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    background: var(--bg);
+    transition: border-color .2s;
+  }
+  .destino-input-wrap:focus-within {
+    border-color: var(--accent);
+  }
+  .destino-input-wrap input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    border-radius: var(--radius) 0 0 var(--radius);
+    background: transparent;
+  }
+  .destino-input-wrap input[type="text"]:focus {
+    box-shadow: none;
+  }
+  .destino-toggle {
+    flex-shrink: 0;
+    width: 40px;
+    border: none;
+    border-left: 1px solid var(--border2);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: .75rem;
+    cursor: pointer;
+    transition: color .15s, background .15s;
+  }
+  .destino-toggle:hover {
+    color: var(--accent2);
+    background: rgba(124,106,247,.08);
+  }
+  .destino-dropdown {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 200;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 40px rgba(0,0,0,.45);
+    display: none;
+  }
+  .destino-dropdown.aberto { display: block; }
+  .destino-dropdown-label {
+    padding: 8px 12px 4px;
+    font-family: var(--font-mono);
+    font-size: .62rem;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,.2);
+  }
+  .destino-dropdown-label:first-child { padding-top: 6px; }
+  .destino-opt {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background .12s;
+  }
+  .destino-opt:last-child { border-bottom: none; }
+  .destino-opt:hover { background: rgba(124,106,247,.08); }
+  .destino-opt.ativo { background: rgba(34,211,238,.06); }
+  .destino-opt-checkbox {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .destino-opt-path {
+    font-family: var(--font-mono);
+    font-size: .78rem;
+    color: var(--text);
+    word-break: break-all;
+    flex: 1;
+    min-width: 0;
+  }
+  .destino-opt-padrao-hint {
+    font-size: .65rem;
+    font-family: var(--font-mono);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    flex-shrink: 0;
+  }
 
   select {
     background: var(--bg);
@@ -478,7 +589,15 @@
         <option value="pior">⬇ Menor tamanho</option>
         <option value="audio">🎵 Somente áudio (MP3)</option>
       </select>
-      <input type="text" id="input-destino" placeholder="Pasta destino (vazio = pasta downloads/ ao lado do servidor)">
+      <div class="destino-combobox" id="destino-combobox">
+        <div class="destino-input-wrap">
+          <input type="text" id="input-destino" placeholder="Ao abrir a lista o campo esvazia para buscar; fora do foco mostra o selecionado"
+            autocomplete="off" spellcheck="false" aria-autocomplete="list" aria-controls="destino-dropdown"
+            aria-expanded="false" role="combobox">
+          <button type="button" class="destino-toggle" id="destino-toggle" title="Abrir ou fechar sugestões" aria-label="Sugestões">▾</button>
+        </div>
+        <div class="destino-dropdown" id="destino-dropdown" role="listbox" aria-label="Pastas salvas"></div>
+      </div>
       <button class="btn-add" id="btn-add" onclick="adicionarDownloads()">
         ↓ Iniciar Download
       </button>
@@ -526,6 +645,338 @@ let ws = null;
 let naoReconectar = false;
 const WS_URL = 'ws://localhost:8765';
 const downloads = {};
+/** Caminho efetivo para download (não confundir com o texto do input ao filtrar). */
+let destinoCommitted = '';
+
+/** Um único registro no localStorage: lista de caminhos + padrão (migra chaves antigas). */
+const LS_CAMINHOS = 'vdget_caminhos_v1';
+const LS_LEGACY_DESTINOS = 'vdget_destinos';
+const LS_LEGACY_PADRAO = 'vdget_destino_padrao';
+const MAX_DESTINOS_SALVOS = 30;
+const DESTINO_BUILTIN = '/downloads';
+
+function dedupePathsManterOrdem(arr) {
+  const seen = new Set();
+  const out = [];
+  for (const x of arr) {
+    if (seen.has(x)) continue;
+    seen.add(x);
+    out.push(x);
+  }
+  return out;
+}
+
+function ensureDestinoState(s) {
+  let paths = dedupePathsManterOrdem(
+    (s.paths || []).map(t => String(t).trim()).filter(Boolean)
+  );
+  if (!paths.includes(DESTINO_BUILTIN)) {
+    paths = [DESTINO_BUILTIN, ...paths.filter(p => p !== DESTINO_BUILTIN)];
+  }
+  let padrao = (s.padrao != null ? String(s.padrao) : '').trim() || DESTINO_BUILTIN;
+  if (!paths.includes(padrao)) {
+    paths = [padrao, ...paths.filter(p => p !== padrao)];
+  }
+  paths = dedupePathsManterOrdem(paths).slice(0, MAX_DESTINOS_SALVOS);
+  if (!paths.includes(padrao)) padrao = DESTINO_BUILTIN;
+  return { paths, padrao };
+}
+
+function gravarDestinoState(s) {
+  const c = ensureDestinoState(s);
+  localStorage.setItem(LS_CAMINHOS, JSON.stringify({ v: 1, paths: c.paths, padrao: c.padrao }));
+  return c;
+}
+
+function migrarDestinosLegado() {
+  let paths = [];
+  const rawPaths = localStorage.getItem(LS_LEGACY_DESTINOS);
+  if (rawPaths) {
+    try {
+      const parsed = JSON.parse(rawPaths);
+      if (Array.isArray(parsed)) {
+        paths = parsed.filter(p => typeof p === 'string' && p.trim()).map(p => p.trim());
+      } else if (typeof parsed === 'string' && parsed.trim()) {
+        paths = [parsed.trim()];
+      }
+    } catch {
+      const t = rawPaths.trim();
+      if (t) paths = [t];
+    }
+  }
+  let padrao = DESTINO_BUILTIN;
+  const rawPad = localStorage.getItem(LS_LEGACY_PADRAO);
+  if (rawPad !== null) {
+    const t = rawPad.trim();
+    padrao = t || DESTINO_BUILTIN;
+  }
+  const c = gravarDestinoState({ paths, padrao });
+  try {
+    localStorage.removeItem(LS_LEGACY_DESTINOS);
+    localStorage.removeItem(LS_LEGACY_PADRAO);
+  } catch {}
+  return c;
+}
+
+function lerDestinoState() {
+  const raw = localStorage.getItem(LS_CAMINHOS);
+  if (raw) {
+    try {
+      const o = JSON.parse(raw);
+      if (o && o.v === 1 && Array.isArray(o.paths)) {
+        const paths = o.paths.filter(p => typeof p === 'string' && p.trim()).map(p => p.trim());
+        const padrao = typeof o.padrao === 'string' ? o.padrao.trim() : '';
+        const fixed = ensureDestinoState({ paths, padrao: padrao || DESTINO_BUILTIN });
+        const salvo = JSON.stringify({ v: 1, paths: fixed.paths, padrao: fixed.padrao });
+        if (salvo !== raw) localStorage.setItem(LS_CAMINHOS, salvo);
+        return fixed;
+      }
+    } catch {}
+  }
+  return migrarDestinosLegado();
+}
+
+function loadDestinosSalvos() {
+  return lerDestinoState().paths.slice();
+}
+
+function saveDestinosSalvos(arr) {
+  const cur = lerDestinoState();
+  gravarDestinoState({
+    paths: arr.slice(0, MAX_DESTINOS_SALVOS),
+    padrao: cur.padrao,
+  });
+}
+
+/** Lista exibida: /downloads sempre primeiro, depois histórico (sem duplicar). */
+function listaDestinosCombinada() {
+  const rest = loadDestinosSalvos().filter(p => p !== DESTINO_BUILTIN);
+  return [DESTINO_BUILTIN, ...rest];
+}
+
+function registrarDestinoUsado(path) {
+  const p = String(path || '').trim();
+  if (!p) return;
+  const cur = lerDestinoState();
+  const list = cur.paths.filter(x => x !== p);
+  list.unshift(p);
+  gravarDestinoState({ paths: list, padrao: cur.padrao });
+  renderDestinoDropdown();
+}
+
+function getDestinoPadrao() {
+  return lerDestinoState().padrao;
+}
+
+function setDestinoPadraoStorage(path) {
+  const cur = lerDestinoState();
+  const p = String(path || '').trim();
+  gravarDestinoState({ paths: cur.paths, padrao: p ? p : DESTINO_BUILTIN });
+}
+
+function destinoDropdownAberto() {
+  const dd = document.getElementById('destino-dropdown');
+  return dd && dd.classList.contains('aberto');
+}
+
+function setDestinoDropdownAberto(aberto) {
+  const dd = document.getElementById('destino-dropdown');
+  const input = document.getElementById('input-destino');
+  if (!dd || !input) return;
+  dd.classList.toggle('aberto', aberto);
+  input.setAttribute('aria-expanded', aberto ? 'true' : 'false');
+  if (!aberto) input.value = destinoCommitted;
+}
+
+function filtrarPathsPorQuery(paths, q) {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return paths.slice();
+  return paths.filter(p => p.toLowerCase().includes(needle));
+}
+
+function appendDestinoDropdownRow(dd, p, padrao) {
+  const row = document.createElement('div');
+  row.className = 'destino-opt';
+  row.dataset.path = p;
+  if (destinoCommitted.trim() === p) row.classList.add('ativo');
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = 'destino-opt-checkbox';
+  cb.checked = p === padrao;
+  cb.title = 'Caminho padrão ao abrir a página';
+  cb.setAttribute('aria-label', `Padrão: ${p}`);
+
+  const pathSpan = document.createElement('span');
+  pathSpan.className = 'destino-opt-path';
+  pathSpan.textContent = p;
+
+  const hint = document.createElement('span');
+  hint.className = 'destino-opt-padrao-hint';
+  hint.textContent = p === padrao ? 'padrão' : '';
+
+  row.appendChild(cb);
+  row.appendChild(pathSpan);
+  row.appendChild(hint);
+
+  row.addEventListener('mousedown', (e) => {
+    if (e.target === cb) return;
+    e.preventDefault();
+    destinoCommitted = p;
+    renderDestinoDropdown();
+    setDestinoDropdownAberto(true);
+  });
+
+  cb.addEventListener('change', (e) => {
+    e.stopPropagation();
+    if (cb.checked) {
+      setDestinoPadraoStorage(p);
+      registrarDestinoUsado(p);
+      return;
+    }
+    if (getDestinoPadrao() === p) setDestinoPadraoStorage(DESTINO_BUILTIN);
+    renderDestinoDropdown();
+  });
+
+  dd.appendChild(row);
+}
+
+function renderDestinoDropdown() {
+  const dd = document.getElementById('destino-dropdown');
+  const input = document.getElementById('input-destino');
+  if (!dd || !input) return;
+
+  const padrao = getDestinoPadrao();
+  const commit = destinoCommitted.trim();
+  const q = document.activeElement === input ? input.value.trim() : '';
+  const all = listaDestinosCombinada();
+  const outrosBase = all.filter(p => p !== commit);
+  const outrosFiltrados = filtrarPathsPorQuery(outrosBase, q);
+
+  dd.replaceChildren();
+
+  if (commit) {
+    const lbl = document.createElement('div');
+    lbl.className = 'destino-dropdown-label';
+    lbl.textContent = 'Selecionado';
+    dd.appendChild(lbl);
+    appendDestinoDropdownRow(dd, commit, padrao);
+  } else {
+    const lbl = document.createElement('div');
+    lbl.className = 'destino-dropdown-label';
+    lbl.textContent = 'Destino (servidor)';
+    dd.appendChild(lbl);
+    const info = document.createElement('div');
+    info.className = 'destino-opt';
+    info.style.cursor = 'default';
+    info.style.color = 'var(--muted)';
+    info.style.fontSize = '.78rem';
+    info.textContent = 'Campo vazio ao enviar — pasta padrão do servidor';
+    dd.appendChild(info);
+  }
+
+  const lbl2 = document.createElement('div');
+  lbl2.className = 'destino-dropdown-label';
+  lbl2.textContent = commit ? 'Outras opções' : 'Opções salvas';
+  dd.appendChild(lbl2);
+
+  if (!outrosFiltrados.length) {
+    const empty = document.createElement('div');
+    empty.className = 'destino-opt';
+    empty.style.cursor = 'default';
+    empty.style.color = 'var(--muted)';
+    empty.style.fontSize = '.78rem';
+    empty.textContent = q
+      ? `Nenhuma outra opção coincide com “${q}”. Enter adiciona esse caminho.`
+      : (all.length ? 'Não há outras entradas.' : 'Nenhum caminho na lista.');
+    dd.appendChild(empty);
+    return;
+  }
+
+  outrosFiltrados.forEach(p => appendDestinoDropdownRow(dd, p, padrao));
+}
+
+function toggleDestinoDropdown() {
+  if (destinoDropdownAberto()) setDestinoDropdownAberto(false);
+  else {
+    renderDestinoDropdown();
+    setDestinoDropdownAberto(true);
+  }
+}
+
+let destinoClickOutsideBound = false;
+function bindDestinoClickOutside() {
+  if (destinoClickOutsideBound) return;
+  destinoClickOutsideBound = true;
+  document.addEventListener('click', (e) => {
+    const root = document.getElementById('destino-combobox');
+    if (root && !root.contains(e.target)) setDestinoDropdownAberto(false);
+  });
+}
+
+function initDestinoCombobox() {
+  const input = document.getElementById('input-destino');
+  const toggle = document.getElementById('destino-toggle');
+  const dd = document.getElementById('destino-dropdown');
+  if (!input || !toggle || !dd) return;
+
+  lerDestinoState();
+  destinoCommitted = getDestinoPadrao();
+  input.value = destinoCommitted;
+
+  input.addEventListener('focus', () => {
+    bindDestinoClickOutside();
+    input.value = '';
+    setDestinoDropdownAberto(true);
+    renderDestinoDropdown();
+  });
+
+  input.addEventListener('blur', () => {
+    setTimeout(() => {
+      const root = document.getElementById('destino-combobox');
+      if (root && root.contains(document.activeElement)) return;
+      setDestinoDropdownAberto(false);
+    }, 0);
+  });
+
+  dd.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+  });
+
+  input.addEventListener('input', () => {
+    renderDestinoDropdown();
+    if (!destinoDropdownAberto()) setDestinoDropdownAberto(true);
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      setDestinoDropdownAberto(false);
+      input.blur();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const v = input.value.trim();
+      if (!v) return;
+      destinoCommitted = v;
+      registrarDestinoUsado(v);
+      input.value = '';
+      renderDestinoDropdown();
+      setDestinoDropdownAberto(true);
+    }
+  });
+
+  toggle.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    bindDestinoClickOutside();
+    toggleDestinoDropdown();
+    if (destinoDropdownAberto()) input.focus();
+  });
+
+  bindDestinoClickOutside();
+  renderDestinoDropdown();
+}
 
 function conectar() {
   try {
@@ -608,12 +1059,16 @@ function adicionarDownloads() {
 
   if (!urls.length) return;
 
+  const destino = destinoCommitted.trim();
+
   enviar({
     acao:      'adicionar',
     urls,
     qualidade: document.getElementById('select-qualidade').value,
-    destino:   document.getElementById('input-destino').value.trim(),
+    destino,
   });
+
+  if (destino) registrarDestinoUsado(destino);
 
   document.getElementById('input-urls').value = '';
 }
@@ -846,6 +1301,8 @@ document.getElementById('input-urls').addEventListener('keydown', (e) => {
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────
+initDestinoCombobox();
+
 conectar();
 </script>
 </body>
