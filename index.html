@@ -662,8 +662,10 @@ let ws = null;
 let naoReconectar = false;
 const WS_URL = 'ws://localhost:8765';
 const downloads = {};
-/** Caminho efetivo para download (não confundir com o texto do input ao filtrar). */
+/** Caminho efetivo para download. */
 let destinoCommitted = '';
+/** Texto usado só para filtrar a lista; atualizado apenas em digitação manual (evento input). */
+let destinoFilterManual = '';
 
 /** Um único registro no localStorage: lista de caminhos + padrão (migra chaves antigas). */
 const LS_CAMINHOS = 'vdget_caminhos_v1';
@@ -844,6 +846,9 @@ function appendDestinoDropdownRow(dd, p, padrao) {
     if (e.target.closest('button.destino-opt-star')) return;
     e.preventDefault();
     destinoCommitted = p;
+    destinoFilterManual = '';
+    const inp = document.getElementById('input-destino');
+    if (inp) inp.value = p;
     renderDestinoDropdown();
     setDestinoDropdownAberto(true);
   });
@@ -870,20 +875,16 @@ function renderDestinoDropdown() {
 
   const padrao = getDestinoPadrao();
   const commit = destinoCommitted.trim();
-  const q = document.activeElement === input ? input.value.trim() : '';
+  const q = destinoFilterManual.trim();
   const all = listaDestinosCombinada();
-  const outrosBase = all.filter(p => p !== commit);
-  const outrosFiltrados = filtrarPathsPorQuery(outrosBase, q);
+  let listados = filtrarPathsPorQuery(all, q);
+  if (commit && !listados.includes(commit)) {
+    listados = [commit, ...listados];
+  }
 
   dd.replaceChildren();
 
-  if (commit) {
-    const lbl = document.createElement('div');
-    lbl.className = 'destino-dropdown-label';
-    lbl.textContent = 'Selecionado';
-    dd.appendChild(lbl);
-    appendDestinoDropdownRow(dd, commit, padrao);
-  } else {
+  if (!commit) {
     const lbl = document.createElement('div');
     lbl.className = 'destino-dropdown-label';
     lbl.textContent = 'Destino (servidor)';
@@ -899,23 +900,23 @@ function renderDestinoDropdown() {
 
   const lbl2 = document.createElement('div');
   lbl2.className = 'destino-dropdown-label';
-  lbl2.textContent = commit ? 'Outras opções' : 'Opções salvas';
+  lbl2.textContent = 'Opções disponíveis';
   dd.appendChild(lbl2);
 
-  if (!outrosFiltrados.length) {
+  if (!listados.length) {
     const empty = document.createElement('div');
     empty.className = 'destino-opt';
     empty.style.cursor = 'default';
     empty.style.color = 'var(--muted)';
     empty.style.fontSize = '.78rem';
     empty.textContent = q
-      ? `Nenhuma outra opção coincide com “${q}”. Enter adiciona esse caminho.`
-      : (all.length ? 'Não há outras entradas.' : 'Nenhum caminho na lista.');
+      ? `Nenhuma opção coincide com “${q}”. Enter adiciona esse caminho.`
+      : (all.length ? 'Nenhuma entrada na lista.' : 'Nenhum caminho na lista.');
     dd.appendChild(empty);
     return;
   }
 
-  outrosFiltrados.forEach(p => appendDestinoDropdownRow(dd, p, padrao));
+  listados.forEach(p => appendDestinoDropdownRow(dd, p, padrao));
 }
 
 function toggleDestinoDropdown() {
@@ -948,6 +949,7 @@ function initDestinoCombobox() {
 
   input.addEventListener('focus', () => {
     bindDestinoClickOutside();
+    destinoFilterManual = '';
     input.value = '';
     setDestinoDropdownAberto(true);
     renderDestinoDropdown();
@@ -966,6 +968,7 @@ function initDestinoCombobox() {
   });
 
   input.addEventListener('input', () => {
+    destinoFilterManual = input.value;
     renderDestinoDropdown();
     if (!destinoDropdownAberto()) setDestinoDropdownAberto(true);
   });
@@ -982,6 +985,7 @@ function initDestinoCombobox() {
       if (!v) return;
       destinoCommitted = v;
       registrarDestinoUsado(v);
+      destinoFilterManual = '';
       input.value = '';
       renderDestinoDropdown();
       setDestinoDropdownAberto(true);
