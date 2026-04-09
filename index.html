@@ -253,13 +253,30 @@
   .destino-opt:last-child { border-bottom: none; }
   .destino-opt:hover { background: rgba(124,106,247,.08); }
   .destino-opt.ativo { background: rgba(34,211,238,.06); }
-  .destino-opt-checkbox {
-    width: 16px;
-    height: 16px;
+  .destino-opt-star {
     flex-shrink: 0;
-    accent-color: var(--accent);
+    width: 32px;
+    height: 32px;
+    margin: -6px 0;
+    border: none;
+    background: transparent;
     cursor: pointer;
+    font-size: 1.05rem;
+    line-height: 1;
+    color: var(--muted);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: color .15s, background .15s, transform .1s;
   }
+  .destino-opt-star:hover {
+    color: var(--yellow);
+    background: rgba(251, 191, 36, .12);
+  }
+  .destino-opt-star:active { transform: scale(.92); }
+  .destino-opt-star.ativo { color: var(--yellow); }
   .destino-opt-path {
     font-family: var(--font-mono);
     font-size: .78rem;
@@ -748,10 +765,13 @@ function saveDestinosSalvos(arr) {
   });
 }
 
-/** Lista exibida: /downloads sempre primeiro, depois histórico (sem duplicar). */
+/** Lista exibida: rota embutida + histórico (sem duplicar), ordem alfabética fixa. */
 function listaDestinosCombinada() {
   const rest = loadDestinosSalvos().filter(p => p !== DESTINO_BUILTIN);
-  return [DESTINO_BUILTIN, ...rest];
+  const all = [DESTINO_BUILTIN, ...rest];
+  return all.sort((a, b) =>
+    a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' })
+  );
 }
 
 function registrarDestinoUsado(path) {
@@ -800,12 +820,13 @@ function appendDestinoDropdownRow(dd, p, padrao) {
   row.dataset.path = p;
   if (destinoCommitted.trim() === p) row.classList.add('ativo');
 
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.className = 'destino-opt-checkbox';
-  cb.checked = p === padrao;
-  cb.title = 'Caminho padrão ao abrir a página';
-  cb.setAttribute('aria-label', `Padrão: ${p}`);
+  const starBtn = document.createElement('button');
+  starBtn.type = 'button';
+  starBtn.className = 'destino-opt-star' + (p === padrao ? ' ativo' : '');
+  starBtn.textContent = p === padrao ? '★' : '☆';
+  starBtn.title = 'Caminho padrão ao abrir a página';
+  starBtn.setAttribute('aria-label', p === padrao ? `Remover padrão: ${p}` : `Definir como padrão: ${p}`);
+  starBtn.setAttribute('aria-pressed', p === padrao ? 'true' : 'false');
 
   const pathSpan = document.createElement('span');
   pathSpan.className = 'destino-opt-path';
@@ -815,26 +836,27 @@ function appendDestinoDropdownRow(dd, p, padrao) {
   hint.className = 'destino-opt-padrao-hint';
   hint.textContent = p === padrao ? 'padrão' : '';
 
-  row.appendChild(cb);
+  row.appendChild(starBtn);
   row.appendChild(pathSpan);
   row.appendChild(hint);
 
   row.addEventListener('mousedown', (e) => {
-    if (e.target === cb) return;
+    if (e.target.closest('button.destino-opt-star')) return;
     e.preventDefault();
     destinoCommitted = p;
     renderDestinoDropdown();
     setDestinoDropdownAberto(true);
   });
 
-  cb.addEventListener('change', (e) => {
+  starBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (cb.checked) {
+    const isPadrao = getDestinoPadrao() === p;
+    if (!isPadrao) {
       setDestinoPadraoStorage(p);
       registrarDestinoUsado(p);
       return;
     }
-    if (getDestinoPadrao() === p) setDestinoPadraoStorage(DESTINO_BUILTIN);
+    setDestinoPadraoStorage(DESTINO_BUILTIN);
     renderDestinoDropdown();
   });
 
