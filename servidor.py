@@ -285,6 +285,24 @@ downloads: dict[str, dict] = {}   # id -> info do download
 clientes:  set = set()            # websockets conectados
 _shutdown: asyncio.Event | None = None  # preenchido em main(); encerrar_servidor
 
+# Encerramento automático: após N s sem atividade de download (com UI já ligada ao WS).
+SEGUNDOS_INATIVIDADE_SEM_DOWNLOAD = 180.0  # 3 minutos
+_t_mono_ultima_atividade_download = 0.0
+_houve_cliente_ws_para_inatividade = False
+
+
+def marcar_atividade_download_servidor() -> None:
+    """Atualiza o relógio usado pelo watchdog de inatividade (thread-safe o suficiente para floats)."""
+    global _t_mono_ultima_atividade_download
+    _t_mono_ultima_atividade_download = time.monotonic()
+
+
+def _downloads_com_transferencia_ativa() -> bool:
+    for v in downloads.values():
+        if v.get("status") in ("pendente", "baixando", "processando"):
+            return True
+    return False
+
 
 def caminho_arquivo_baixado(
     ydl, info, qualidade: str, exts_audio: tuple[str, ...] | None = None
@@ -381,8 +399,9 @@ def _subprocess_flags_windows_silencioso() -> int:
 
 def matar_instancias_terminal_vdget_windows():
     """
-    Encerra janelas do launcher (cmd em pause) e outros Python que executam
-    este mesmo servidor.py. Não mata o processo atual (evita suicídio antes do shutdown).
+    Encerra janelas do launcher (cmd em pause), consola minimizada do servidor,
+    outros Python que executam este servidor.py ou controlador.py na mesma pasta.
+    Não mata o processo atual (evita suicídio antes do shutdown).
     """
     if platform.system() != "Windows":
         return
@@ -392,14 +411,22 @@ def matar_instancias_terminal_vdget_windows():
         capture_output=True,
         creationflags=fl,
     )
+    subprocess.run(
+        ["taskkill", "/FI", "WINDOWTITLE eq VDGET Servidor", "/F"],
+        capture_output=True,
+        creationflags=fl,
+    )
     script_path = os.path.abspath(__file__)
+    controlador_path = os.path.join(os.path.dirname(script_path), "controlador.py")
     me = os.getpid()
     ps_body = (
         "$ErrorActionPreference = 'SilentlyContinue'\n"
         f"$me = {me}\n"
         f"$p = @'\n{script_path}\n'@\n"
+        f"$pc = @'\n{controlador_path}\n'@\n"
         "Get-CimInstance Win32_Process | Where-Object {\n"
-        "  $_.CommandLine -and $_.ProcessId -ne $me -and $_.CommandLine.Contains($p)\n"
+        "  $_.CommandLine -and $_.ProcessId -ne $me -and\n"
+        "  ($_.CommandLine.Contains($p) -or $_.CommandLine.Contains($pc))\n"
         "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }\n"
     )
 
@@ -431,6 +458,34 @@ async def broadcast(mensagem: dict):
     if clientes:
         dados = json.dumps(mensagem, ensure_ascii=False)
         await asyncio.gather(*[ws.send(dados) for ws in clientes], return_exceptions=True)
+
+
+async def disparar_encerramento_vdget() -> None:
+    """Encerra o WebSocket, mata consolas/processo relacionados no Windows e libera o wait em main()."""
+    ev = _shutdown
+    if not ev or ev.is_set():
+        return
+    await broadcast({"tipo": "servidor_encerrando"})
+    matar_instancias_terminal_vdget_windows()
+    ev.set()
+
+
+async def watchdog_inatividade_sem_download() -> None:
+    """Fecha VDGET após SEGUNDOS_INATIVIDADE_SEM_DOWNLOAD sem fila ativa nem progresso de download."""
+    while True:
+        await asyncio.sleep(0.25)
+        ev = _shutdown
+        if ev is None or ev.is_set():
+            return
+        if not _houve_cliente_ws_para_inatividade:
+            continue
+        if _downloads_com_transferencia_ativa():
+            continue
+        if time.monotonic() - _t_mono_ultima_atividade_download < SEGUNDOS_INATIVIDADE_SEM_DOWNLOAD:
+            continue
+        await disparar_encerramento_vdget()
+        return
+
 
 # ── Realiza o download em thread separada ─────────────────────────────────────
 async def executar_download(dl_id: str):
@@ -467,6 +522,7 @@ async def executar_download(dl_id: str):
 
     def hook(d):
         if d["status"] == "downloading":
+            marcar_atividade_download_servidor()
             pct = progresso_pct(d)
 
             downloads[dl_id].update({
@@ -487,6 +543,7 @@ async def executar_download(dl_id: str):
             )
 
         elif d["status"] == "finished":
+            marcar_atividade_download_servidor()
             downloads[dl_id].update({
                 "status":    "processando",
                 "progresso": 99,
@@ -620,10 +677,14 @@ async def executar_download(dl_id: str):
         })
 
     await broadcast({"tipo": "atualizar", "download": downloads[dl_id]})
+    marcar_atividade_download_servidor()
 
 # ── Handler de conexão WebSocket ──────────────────────────────────────────────
 async def handler(ws):
+    global _houve_cliente_ws_para_inatividade
     clientes.add(ws)
+    _houve_cliente_ws_para_inatividade = True
+    marcar_atividade_download_servidor()
     print(f"[+] Cliente conectado  ({len(clientes)} total)")
 
     # Envia estado atual para o novo cliente
@@ -674,6 +735,7 @@ async def handler(ws):
                         "arquivo":    "",
                     }
                     await broadcast({"tipo": "adicionar", "download": downloads[dl_id]})
+                    marcar_atividade_download_servidor()
                     asyncio.create_task(executar_download(dl_id))
 
             # ── Remover item da lista ────────────────────────────────
@@ -711,11 +773,7 @@ async def handler(ws):
                         abrir_arquivo_com_app_padrao(arq)
 
             elif acao == "encerrar_servidor":
-                ev = _shutdown
-                if ev and not ev.is_set():
-                    await broadcast({"tipo": "servidor_encerrando"})
-                    matar_instancias_terminal_vdget_windows()
-                    ev.set()
+                await disparar_encerramento_vdget()
 
     except websockets.exceptions.ConnectionClosed:
         pass
@@ -725,9 +783,11 @@ async def handler(ws):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 async def main():
-    global _shutdown
+    global _shutdown, _t_mono_ultima_atividade_download, _houve_cliente_ws_para_inatividade
     HOST, PORT = "localhost", 8765
     _shutdown = asyncio.Event()
+    _t_mono_ultima_atividade_download = time.monotonic()
+    _houve_cliente_ws_para_inatividade = False
     print(f"""
 ╔══════════════════════════════════════════════╗
 ║      Gerenciador de Downloads  |  yt-dlp     ║
@@ -737,7 +797,15 @@ async def main():
 ╚══════════════════════════════════════════════╝
 """)
     async with websockets.serve(handler, HOST, PORT):
-        await _shutdown.wait()
+        wd = asyncio.create_task(watchdog_inatividade_sem_download())
+        try:
+            await _shutdown.wait()
+        finally:
+            wd.cancel()
+            try:
+                await wd
+            except asyncio.CancelledError:
+                pass
     print("[*] Servidor encerrado.")
 
 if __name__ == "__main__":
