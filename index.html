@@ -723,6 +723,10 @@ const LS_ORDEM_CONCLUIDOS = 'vdget_ordem_concluidos';
 const LS_HISTORICO_CONCLUIDOS = 'vdget_historico_concluidos_v1';
 /** Rascunho da caixa de links; só é apagado ao enviar download ou se o usuário esvaziar o campo. */
 const LS_RASCUNHO_LISTA_URLS = 'vdget_rascunho_lista_urls_v1';
+/** Altura em px do textarea de links (preferência de layout). */
+const LS_INPUT_URLS_ALTURA = 'vdget_input_urls_altura_px_v1';
+const MIN_ALTURA_INPUT_URLS = 80;
+const MAX_ALTURA_INPUT_URLS = 2000;
 const MAX_DESTINOS_SALVOS = 30;
 const MAX_HISTORICO_CONCLUIDOS = 300;
 const DESTINO_BUILTIN = '/downloads';
@@ -1190,6 +1194,46 @@ function limparRascunhoListaUrls() {
   } catch (_) { /* ignore */ }
 }
 
+function clampAlturaInputUrls(px) {
+  const n = Number(px);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(MAX_ALTURA_INPUT_URLS, Math.max(MIN_ALTURA_INPUT_URLS, Math.round(n)));
+}
+
+let debounceAlturaUrlsTimer = 0;
+function agendarGravarAlturaInputUrls() {
+  if (debounceAlturaUrlsTimer) clearTimeout(debounceAlturaUrlsTimer);
+  debounceAlturaUrlsTimer = setTimeout(() => {
+    debounceAlturaUrlsTimer = 0;
+    gravarAlturaInputUrls();
+  }, 120);
+}
+
+function gravarAlturaInputUrls() {
+  const el = document.getElementById('input-urls');
+  if (!el) return;
+  try {
+    const h = clampAlturaInputUrls(el.offsetHeight);
+    if (h == null) return;
+    localStorage.setItem(LS_INPUT_URLS_ALTURA, String(h));
+  } catch (_) { /* quota ou desativado */ }
+}
+
+function restaurarAlturaInputUrls() {
+  const el = document.getElementById('input-urls');
+  if (!el) return;
+  try {
+    const raw = localStorage.getItem(LS_INPUT_URLS_ALTURA);
+    if (raw == null) return;
+    const h = clampAlturaInputUrls(raw);
+    if (h == null) {
+      localStorage.removeItem(LS_INPUT_URLS_ALTURA);
+      return;
+    }
+    el.style.height = h + 'px';
+  } catch (_) { /* ignore */ }
+}
+
 // ── Estado ────────────────────────────────────────────────────────────────
 function carregarEstado(lista) {
   lista.forEach(dl => {
@@ -1557,6 +1601,10 @@ function atualizarStats() {
 // ── Enter no textarea ─────────────────────────────────────────────────────
 const elInputUrls = document.getElementById('input-urls');
 restaurarRascunhoListaUrls();
+restaurarAlturaInputUrls();
+if (typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(() => agendarGravarAlturaInputUrls()).observe(elInputUrls);
+}
 elInputUrls.addEventListener('input', gravarRascunhoListaUrls);
 elInputUrls.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.ctrlKey) adicionarDownloads();
