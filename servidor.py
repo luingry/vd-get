@@ -574,13 +574,6 @@ async def executar_download(dl_id: str):
         "postprocessors":                [],
     }
 
-    if qualidade == "audio":
-        ydl_opts["postprocessors"] = [{
-            "key":              "FFmpegExtractAudio",
-            "preferredcodec":   "mp3",
-            "preferredquality": "0",
-        }]
-
     exts_resolver: tuple[str, ...] | None = None
     usar_titulo_audio = False
 
@@ -605,7 +598,23 @@ async def executar_download(dl_id: str):
             ydl_opts.pop("merge_output_format", None)
             usar_titulo_audio = True
             exts_resolver = (".opus", ".m4a", ".mp3", ".ogg", ".wav", ".flac")
-        elif somente and qualidade in ("melhor", "audio"):
+        elif somente and qualidade == "melhor":
+            # Fonte só áudio: melhor qualidade = codec/container nativos (sem transcodificar para mp3).
+            usar_titulo_audio = True
+            ydl_opts["format"] = formatos["melhor"]
+            ydl_opts["postprocessors"] = []
+            ydl_opts.pop("merge_output_format", None)
+            exts_resolver = (
+                ".opus",
+                ".m4a",
+                ".ogg",
+                ".wav",
+                ".flac",
+                ".webm",
+                ".mp3",
+            )
+        elif somente and qualidade == "audio":
+            # MP3/WAV só quando a mídia já é exclusivamente áudio e o usuário pediu modo áudio.
             usar_titulo_audio = True
             if info_tem_wav_ou_flac_nativo(info_meta):
                 ydl_opts["format"] = "bestaudio[ext=wav]/bestaudio[ext=flac]/bestaudio/best"
@@ -625,7 +634,20 @@ async def executar_download(dl_id: str):
                 exts_resolver = (".mp3", ".m4a", ".opus")
             ydl_opts.pop("merge_output_format", None)
         elif qualidade == "audio":
+            # Vídeo disponível: só faixa de áudio, sem converter para mp3 (mantém m4a/opus/webm etc.).
             usar_titulo_audio = True
+            ydl_opts["format"] = formatos["audio"]
+            ydl_opts["postprocessors"] = []
+            ydl_opts.pop("merge_output_format", None)
+            exts_resolver = (
+                ".m4a",
+                ".opus",
+                ".webm",
+                ".ogg",
+                ".flac",
+                ".wav",
+                ".mp3",
+            )
 
         if usar_titulo_audio:
             titulo_m = titulo_audio_exibicao(info_meta, dl["url"])
