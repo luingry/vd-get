@@ -5,10 +5,12 @@ Instale dependências: pip install websockets yt-dlp
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,7 +34,7 @@ try:
     import yt_dlp
 except ImportError:
     print("[*] Instalando yt-dlp...")
-    instalar("yt-dlp")
+    instalar("yt-dlp[default,curl-cffi]")
     import yt_dlp
 
 # ── ANSI (yt-dlp colore _speed_str, _eta_str, etc. quando o terminal suporta) ─
@@ -281,6 +283,11 @@ def info_tem_wav_ou_flac_nativo(info: dict | None) -> bool:
 _DIR_SERVIDOR = os.path.dirname(os.path.abspath(__file__))
 PASTA_DOWNLOAD_PADRAO = os.path.join(_DIR_SERVIDOR, "downloads")
 
+# Ajuste fino de throughput (HLS/DASH e downloads HTTP grandes)
+FRAGMENTOS_PARALELOS = 16
+BUFFER_DOWNLOAD_BYTES = 256 * 1024
+HTTP_CHUNK_SIZE_BYTES = 16 * 1024 * 1024
+
 downloads: dict[str, dict] = {}   # id -> info do download
 clientes:  set = set()            # websockets conectados
 _shutdown: asyncio.Event | None = None  # preenchido em main(); encerrar_servidor
@@ -395,6 +402,106 @@ def _subprocess_flags_windows_silencioso() -> int:
     if sys.platform == "win32":
         return getattr(subprocess, "CREATE_NO_WINDOW", 0)
     return 0
+
+
+# SHA-256 (8 bytes) de ie_key de extractors que exigem impersonate antecipado
+_IE_KEY_IMPERSONATE_PREFIXOS = frozenset({bytes.fromhex("69b450ac6db385cf")})
+
+
+def url_exige_impersonate_browser(url: str) -> bool:
+    """Sites cujo extractor yt-dlp costuma exigir fingerprint de navegador."""
+    try:
+        for ie in yt_dlp.extractor.gen_extractors():
+            if not ie.suitable(url):
+                continue
+            prefixo = hashlib.sha256(ie.ie_key().encode()).digest()[:8]
+            if prefixo in _IE_KEY_IMPERSONATE_PREFIXOS:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def format_progressivo_https(qualidade: str) -> str:
+    """Evita HLS (412); prioriza progressivo HTTPS."""
+    if qualidade == "pior":
+        return (
+            "worstvideo[protocol=https]+worstaudio[protocol=https]/"
+            "worst[protocol=https]/worst"
+        )
+    if qualidade == "audio":
+        return "bestaudio[protocol=https]/best"
+    return (
+        "bestvideo[protocol=https]+bestaudio[protocol=https]/"
+        "best[protocol=https]/best"
+    )
+
+
+def mensagem_erro_download(err: Exception) -> str:
+    """yt-dlp às vezes levanta AssertionError sem texto — UI não pode ficar vazia."""
+    try:
+        from yt_dlp.utils import error_to_str
+        texto = error_to_str(err)
+    except Exception:
+        texto = f"{type(err).__name__}: {err}"
+    if not str(err).strip() and isinstance(err, AssertionError):
+        texto = (
+            "Falha ao configurar impersonate (yt-dlp). "
+            "Reinicie o VDGET; precisa de curl_cffi compatível."
+        )
+    return (texto or type(err).__name__).strip()[:2000]
+
+
+def erro_pede_impersonate(err: Exception) -> bool:
+    """Detecta falhas típicas de anti-bot / fingerprint que pedem impersonate chrome."""
+    msg = (str(err) or "").lower()
+    return (
+        "cloudflare anti-bot challenge" in msg
+        or ("http error 403" in msg and "generic" in msg)
+        or "http error 410" in msg
+        or "--extractor-args" in msg and "impersonate" in msg
+    )
+
+
+def habilitar_impersonate_generic(ydl_opts: dict, url: str = "") -> bool:
+    """
+    Fingerprint de Chrome via curl_cffi (API yt-dlp exige ImpersonateTarget, não str).
+    Retorna True quando conseguiu preparar ambiente para retry.
+    """
+    try:
+        import curl_cffi  # noqa: F401  (dependência pedida pelo yt-dlp)
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+    except Exception:
+        try:
+            instalar("curl-cffi")
+            import curl_cffi  # noqa: F401
+            from yt_dlp.networking.impersonate import ImpersonateTarget
+        except Exception:
+            return False
+
+    ydl_opts["impersonate"] = ImpersonateTarget.from_str("chrome")
+    if not url_exige_impersonate_browser(url):
+        extractor_args = dict(ydl_opts.get("extractor_args") or {})
+        extractor_args["generic"] = ["impersonate"]
+        ydl_opts["extractor_args"] = extractor_args
+    return True
+
+
+def aplicar_opcoes_velocidade(ydl_opts: dict, url: str = "") -> None:
+    """
+    Mais fragmentos/buffer/chunk no downloader nativo.
+    aria2c só quando não há impersonate (curl_cffi obrigatório nesses casos).
+    """
+    ydl_opts["concurrent_fragment_downloads"] = FRAGMENTOS_PARALELOS
+    ydl_opts["buffersize"] = BUFFER_DOWNLOAD_BYTES
+    ydl_opts["http_chunk_size"] = HTTP_CHUNK_SIZE_BYTES
+    if ydl_opts.get("impersonate") or url_exige_impersonate_browser(url):
+        return
+    if shutil.which("aria2c"):
+        ydl_opts["external_downloader"] = "aria2c"
+        ydl_opts["external_downloader_args"] = {
+            "aria2c": ["-x", "16", "-s", "16", "-k", "5M", "--summary-interval=0"],
+        }
 
 
 def matar_instancias_terminal_vdget_windows():
@@ -560,11 +667,8 @@ async def executar_download(dl_id: str):
         "outtmpl":                       os.path.join(destino, "%(title)s.%(ext)s"),
         "merge_output_format":           "mp4",
         "noplaylist":                    True,
-        "concurrent_fragment_downloads": 8,
-        "buffersize":                    16384,
         "retries":                       5,
         "fragment_retries":              5,
-        "http_chunk_size":               10485760,
         "skip_unavailable_fragments":    True,
         "throttledratelimit":            100000,
         "progress_hooks":                [hook],
@@ -573,6 +677,11 @@ async def executar_download(dl_id: str):
         "color":                         "never",
         "postprocessors":                [],
     }
+
+    url_dl = dl.get("url", "")
+    if url_exige_impersonate_browser(url_dl):
+        habilitar_impersonate_generic(ydl_opts, url=url_dl)
+    aplicar_opcoes_velocidade(ydl_opts, url=url_dl)
 
     exts_resolver: tuple[str, ...] | None = None
     usar_titulo_audio = False
@@ -660,8 +769,11 @@ async def executar_download(dl_id: str):
         downloads[dl_id].update({"titulo": titulo_m, "thumb": thumb_m})
         await broadcast({"tipo": "atualizar", "download": downloads[dl_id]})
 
-    def _baixar():
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    if url_exige_impersonate_browser(url_dl):
+        ydl_opts["format"] = format_progressivo_https(qualidade)
+
+    def _baixar_com_opts(opts: dict):
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(dl["url"], download=True)
             caminho = caminho_arquivo_baixado(
                 ydl, info, qualidade, exts_audio=exts_resolver
@@ -669,7 +781,20 @@ async def executar_download(dl_id: str):
             return info, caminho
 
     try:
-        info, caminho_final = await loop.run_in_executor(None, _baixar)
+        try:
+            info, caminho_final = await loop.run_in_executor(
+                None, lambda: _baixar_com_opts(ydl_opts)
+            )
+        except Exception as e:
+            if not erro_pede_impersonate(e):
+                raise
+            if ydl_opts.get("impersonate"):
+                raise
+            if not habilitar_impersonate_generic(ydl_opts, url=url_dl):
+                raise
+            info, caminho_final = await loop.run_in_executor(
+                None, lambda: _baixar_com_opts(ydl_opts)
+            )
         if info and (qualidade == "audio" or usar_titulo_audio):
             titulo = titulo_audio_exibicao(info, dl.get("url") or "Desconhecido")
         elif info:
@@ -693,7 +818,7 @@ async def executar_download(dl_id: str):
     except Exception as e:
         downloads[dl_id].update({
             "status":  "erro",
-            "erro":    str(e),
+            "erro":    mensagem_erro_download(e),
             "progresso": 0,
             "finalizado_ts": time.time(),
         })

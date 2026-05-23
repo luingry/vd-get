@@ -55,7 +55,7 @@ if errorlevel 1 (
 %PY_EXE% %PY_ARGS% -c "import yt_dlp" >nul 2>&1
 if errorlevel 1 (
     echo  [*] Instalando yt-dlp...
-    %PY_EXE% %PY_ARGS% -m pip install yt-dlp -q
+    %PY_EXE% %PY_ARGS% -m pip install "yt-dlp[default,curl-cffi]" -q
 )
 echo  [OK] Dependencias prontas.
 
