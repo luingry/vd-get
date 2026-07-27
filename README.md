@@ -7,6 +7,9 @@ Interface web para enfileirar downloads com **yt-dlp**; o backend em Python exp�
 - **Windows** (os `.bat` e o registo do protocolo são para este SO).
 - **Python 3** no PATH (o `iniciar.bat` tenta `py -3`, depois `python`, depois `python3`).
 - Pacotes Python (instalados automaticamente pelo `iniciar.bat` se faltarem): `websockets`, `yt-dlp`.
+- `playwright` é **opcional**: só é instalado sob demanda, na primeira vez que o fallback
+  headless (`sniffer.py`) for necessário. Sem ele, o VDGET funciona normalmente — só não
+  há resgate automático para páginas com player MSE/`blob:`.
 
 ## Como rodar
 
@@ -51,7 +54,29 @@ py -3 controlador.py
 | **`instalar-protocolo.bat`** | Regista o protocolo **`vdget://`** no Windows para disparar o `iniciar.bat` desta pasta. |
 | **`abrir_interface.py`** | Usado pelo `iniciar.bat`: foca a janela do navegador com a VDGET ou abre o `index.html`. |
 | **`controlador.py`** | Servidor HTTP local (**8764**): serve a interface e API para ligar/parar/reiniciar o `servidor.py`. |
+| **`sniffer.py`** | Fallback opcional: quando o yt-dlp falha (páginas com player MSE/`blob:`), sobe um Chromium headless para descobrir o manifesto HLS/DASH e reentregar o download. Ver secção abaixo. |
 | **`downloads/`** | Pasta criada em execução (se usar destino padrão): ficheiros baixados ficam aqui, ao lado do servidor. |
+
+## Fallback automático via navegador headless (`sniffer.py`)
+
+Alguns sites tocam o vídeo através de um player alimentado por **MSE**/`blob:`, e o yt-dlp
+não consegue extrair a URL do vídeo sozinho nesses casos. Quando isso acontece, o VDGET
+tenta um resgate automático: sobe um **Chromium headless** (sem nenhuma janela, sem
+interação do usuário — usa o Google Chrome já instalado no sistema, `channel="chrome"`,
+para não baixar ~150 MB de Chromium empacotado), deixa o JavaScript da página rodar,
+intercepta a requisição do manifesto (`.m3u8`/`.mpd`) com os headers reais, e reentrega
+isso ao yt-dlp para completar o download.
+
+- O navegador sempre reporta **viewport 1920×1080** (alguns sites escolhem a qualidade do
+  manifesto em função do tamanho do viewer).
+- Só entra em ação **depois** que o yt-dlp já falhou sozinho — nunca deixa um download que
+  funcionaria normalmente mais lento.
+- Se o resgate também falhar, a **mensagem de erro original do yt-dlp** aparece na UI, nunca
+  uma mensagem do sniffer.
+- Instala o Playwright (`pip install playwright`) sob demanda, na primeira vez que o
+  fallback é necessário — reportado na UI como status **"analisando"**.
+- Pode ser desligado por completo com a variável de ambiente `VDGET_SNIFFER=0` (útil para
+  isolar regressões, sem editar código).
 
 ## Portas
 

@@ -510,6 +510,7 @@
   .dl-status.pendente    { background: rgba(251,191,36,.12);  color: var(--yellow); }
   .dl-status.baixando    { background: rgba(124,106,247,.15); color: var(--accent2); }
   .dl-status.processando { background: rgba(34,211,238,.12);  color: var(--cyan); }
+  .dl-status.analisando  { background: rgba(34,211,238,.12);  color: var(--cyan); }
   .dl-status.concluido   { background: rgba(52,211,153,.12);  color: var(--green); }
   .dl-status.erro        { background: rgba(248,113,113,.12); color: var(--red); }
 
@@ -612,6 +613,27 @@
   .btn-icon .icon-svg { width: 16px; height: 16px; }
   .btn-add .icon-svg { width: 18px; height: 18px; }
   .dl-thumb .icon-svg { width: 22px; height: 22px; color: var(--muted); }
+
+  /* ── Aviso flutuante ── */
+  #aviso-flutuante {
+    position: fixed;
+    left: 50%; bottom: 24px;
+    transform: translateX(-50%) translateY(12px);
+    max-width: min(560px, calc(100vw - 32px));
+    padding: 10px 16px;
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--fg);
+    font-size: 13px;
+    line-height: 1.4;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+    z-index: 999;
+  }
+  #aviso-flutuante.visivel { opacity: 1; transform: translateX(-50%) translateY(0); }
 
   /* ── Scrollbar ── */
   ::-webkit-scrollbar { width: 6px; }
@@ -1084,6 +1106,7 @@ function conectar() {
   ws.onopen = () => {
     setStatus(true);
     console.log('[WS] Conectado');
+    despacharAcoesPendentes();  // ações pedidas com o servidor desligado correm agora
   };
 
   ws.onmessage = (e) => {
@@ -1134,6 +1157,20 @@ function enviar(dados) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(dados));
   }
+}
+
+function mostrarAviso(texto, ms = 3200) {
+  let el = document.getElementById('aviso-flutuante');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'aviso-flutuante';
+    el.setAttribute('role', 'status');
+    document.body.appendChild(el);
+  }
+  el.textContent = texto;
+  el.classList.add('visivel');
+  clearTimeout(mostrarAviso._t);
+  mostrarAviso._t = setTimeout(() => el.classList.remove('visivel'), ms);
 }
 
 function historicoConcluidosParaSalvar() {
@@ -1269,11 +1306,22 @@ function adicionarDownloads() {
   limparRascunhoListaUrls();
 }
 
+// Remover/limpar são operações puramente de interface: o histórico de concluídos vive no
+// localStorage deste navegador, não no servidor. Por isso agimos localmente primeiro e só
+// depois avisamos o servidor (que pode estar desligado). Antes tudo passava por enviar(),
+// que é um no-op silencioso com o WebSocket fechado — o clique simplesmente não fazia nada.
+// removerCard() é idempotente, então o eco do servidor não causa problema.
 function removerItem(id) {
+  removerCard(id);
   enviar({ acao: 'remover', id });
 }
 
 function limparConcluidos() {
+  // Mesmo critério do servidor: só "concluido" (itens com erro continuam na lista).
+  Object.values(downloads)
+    .filter(d => d && d.status === 'concluido')
+    .map(d => d.id)
+    .forEach(removerCard);
   enviar({ acao: 'limpar_concluidos' });
 }
 
@@ -1343,12 +1391,67 @@ function aplicarPreferenciaOrdenacaoConcluidos() {
   sincronizarUIOrdenacaoConcluidos();
 }
 
+// Abrir arquivo/pasta é a única ação que o navegador não consegue fazer sozinho: exige um
+// processo local. Quando o servidor está desligado (o watchdog o encerra após 3 min ocioso),
+// em vez de falhar em silêncio, enfileiramos a ação, disparamos vdget:// para religar e
+// executamos assim que o WebSocket reconectar. Mandamos arquivo/destino junto porque o
+// servidor recém-iniciado não conhece mais este id — o histórico só existe aqui.
+let acoesPendentesServidor = [];
+const VALIDADE_ACAO_PENDENTE_MS = 45000;
+
+function enviarOuEnfileirar(dados) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    enviar(dados);
+    return true;
+  }
+  acoesPendentesServidor = acoesPendentesServidor
+    .filter(a => a.expiraEm > Date.now())
+    .filter(a => !(a.dados.acao === dados.acao && a.dados.id === dados.id));
+  acoesPendentesServidor.push({ dados, expiraEm: Date.now() + VALIDADE_ACAO_PENDENTE_MS });
+  tentarLigarServidor();
+  return false;
+}
+
+function tentarLigarServidor() {
+  if (naoReconectar) { naoReconectar = false; conectar(); }
+  try {
+    // Protocolo registado por instalar-protocolo.bat. Se não estiver, nada acontece —
+    // por isso o aviso abaixo tem prazo e explica o que fazer.
+    const f = document.createElement('iframe');
+    f.style.display = 'none';
+    f.src = 'vdget://iniciar';
+    document.body.appendChild(f);
+    setTimeout(() => f.remove(), 3000);
+  } catch (_) { /* protocolo não registado */ }
+  mostrarAviso('Servidor desligado — a ligar… a ação corre a seguir.');
+  clearTimeout(tentarLigarServidor._t);
+  tentarLigarServidor._t = setTimeout(() => {
+    if (acoesPendentesServidor.length && (!ws || ws.readyState !== WebSocket.OPEN)) {
+      acoesPendentesServidor = [];
+      mostrarAviso('Não foi possível ligar o servidor. Abra o iniciar.bat (ou corra o instalar-protocolo.bat uma vez).', 6000);
+    }
+  }, VALIDADE_ACAO_PENDENTE_MS);
+}
+
+function despacharAcoesPendentes() {
+  const agora = Date.now();
+  const fila = acoesPendentesServidor.filter(a => a.expiraEm > agora);
+  acoesPendentesServidor = [];
+  clearTimeout(tentarLigarServidor._t);
+  fila.forEach(a => enviar(a.dados));
+}
+
+function dadosArquivoDoItem(id) {
+  const d = downloads[id] || {};
+  return { arquivo: d.arquivo || '', destino: d.destino || '' };
+}
+
 function abrirPastaArquivo(id) {
-  enviar({ acao: 'abrir_pasta_arquivo', id });
+  enviarOuEnfileirar({ acao: 'abrir_pasta_arquivo', id, ...dadosArquivoDoItem(id) });
 }
 
 function abrirArquivoDireto(id) {
-  enviar({ acao: 'abrir_arquivo', id });
+  enviarOuEnfileirar({ acao: 'abrir_arquivo', id, ...dadosArquivoDoItem(id) });
 }
 
 function encerrarServidor() {
@@ -1367,10 +1470,22 @@ const ICON_THUMB = {
   pendente: iconeSVG('<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'),
   baixando: iconeSVG('<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>'),
   processando: iconeSVG('<circle cx="5" cy="12" r="2.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="2.5" fill="currentColor" stroke="none"/>'),
+  analisando: iconeSVG('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'),
   concluido: iconeSVG('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/>'),
   erro: iconeSVG('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
 };
 const ICON_THUMB_FALLBACK = iconeSVG('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.27 6.96 8.73 5.05 8.73-5.05"/><path d="M12 22.08V12"/>');
+
+// CDN com proteção de hotlink (Referer 403 é comum) não pode deixar um quadrado vazio:
+// volta pro ícone de status e libera dataset.thumbSrc pra não travar uma retentativa
+// futura com a mesma URL. Usado pelo <img onerror="..."> inline de buildCardHTML().
+function onThumbError(imgEl, status) {
+  const thumbDiv = imgEl.closest('.dl-thumb');
+  if (thumbDiv) {
+    delete thumbDiv.dataset.thumbSrc;
+    thumbDiv.innerHTML = ICON_THUMB[status] || ICON_THUMB_FALLBACK;
+  }
+}
 
 const ICON_FOLDER_BTN = iconeSVG('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9l-1.14-1.72A2 2 0 0 0 9.07 2H4a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2Z"/>');
 const ICON_PLAY_BTN = '<svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><polygon points="10 7 17 12 10 17 10 7" fill="currentColor" stroke="none"/></svg>';
@@ -1432,7 +1547,7 @@ function atualizarCard(dl) {
 
   // Mesmo card na fila ativa: atualiza só a barra (mantém o elemento → width anima de verdade)
   const bar = card.querySelector('.dl-progress-bar');
-  const podeLeve = bar && ['baixando', 'processando', 'pendente'].includes(statusNovo);
+  const podeLeve = bar && ['baixando', 'processando', 'pendente', 'analisando'].includes(statusNovo);
   if (podeLeve) {
     const pct = pctBarra(dl);
     const barClass = statusNovo === 'baixando' ? 'baixando'
@@ -1459,6 +1574,19 @@ function atualizarCard(dl) {
       if (info) {
         info.innerHTML = `<b>${escHtml(dl.velocidade || '')}</b>  ${escHtml(dl.baixado || '')}/${escHtml(dl.total || '')}  ETA ${escHtml(dl.eta || '')}`;
       }
+    } else if (statusNovo === 'analisando') {
+      // Sniffer headless: sem % real, reaproveita o campo "velocidade" como mensagem de status.
+      if (!info) {
+        const meta = card.querySelector('.dl-meta');
+        if (meta) {
+          info = document.createElement('span');
+          info.className = 'dl-info';
+          meta.appendChild(info);
+        }
+      }
+      if (info) {
+        info.innerHTML = escHtml(dl.velocidade || 'procurando stream…');
+      }
     } else if (info) {
       info.remove();
     }
@@ -1476,8 +1604,14 @@ function atualizarCard(dl) {
           thumb.dataset.thumbSrc = dl.thumb;
           const img = document.createElement('img');
           img.alt = '';
+          img.referrerPolicy = 'no-referrer';
+          img.onerror = function () {
+            // CDN com proteção de hotlink (403) não pode virar um quadrado vazio: volta
+            // pro ícone de status e libera dataset.thumbSrc pra não travar uma retentativa.
+            delete thumb.dataset.thumbSrc;
+            thumb.innerHTML = ICON_THUMB[statusNovo] || ICON_THUMB_FALLBACK;
+          };
           img.src = dl.thumb;
-          img.onerror = function () { this.style.display = 'none'; };
           thumb.replaceChildren(img);
         }
       } else {
@@ -1523,6 +1657,8 @@ function buildCardHTML(dl) {
 
   const infoExtra = dl.status === 'baixando'
     ? `<span class="dl-info"><b>${dl.velocidade || ''}</b>  ${dl.baixado || ''}/${dl.total || ''}  ETA ${dl.eta || ''}</span>`
+    : dl.status === 'analisando'
+    ? `<span class="dl-info">${dl.velocidade || 'procurando stream…'}</span>`
     : dl.status === 'erro'
     ? `<span class="dl-info" style="color:var(--red)">${dl.erro || 'Erro desconhecido'}</span>`
     : dl.status === 'concluido'
@@ -1530,12 +1666,12 @@ function buildCardHTML(dl) {
     : '';
 
   const thumbContent = dl.thumb
-    ? `<img src="${dl.thumb}" alt="" onerror="this.style.display='none'">`
+    ? `<img src="${escHtml(dl.thumb)}" alt="" referrerpolicy="no-referrer" onerror="onThumbError(this, '${dl.status}')">`
     : (ICON_THUMB[dl.status] || ICON_THUMB_FALLBACK);
 
   const showProgress =
     !['concluido', 'erro'].includes(dl.status) &&
-    (['baixando', 'processando', 'pendente'].includes(dl.status) || pct > 0);
+    (['baixando', 'processando', 'pendente', 'analisando'].includes(dl.status) || pct > 0);
 
   const botoesConcluido = dl.status === 'concluido'
     ? `<button type="button" class="btn-icon btn-open-folder" onclick="abrirPastaArquivo('${dl.id}')" title="Abrir pasta do arquivo">${ICON_FOLDER_BTN}</button>${
@@ -1588,12 +1724,12 @@ function verificarEmpties() {
 
 // ── Stats ─────────────────────────────────────────────────────────────────
 function atualizarStats() {
-  const vals = { baixando: 0, pendente: 0, concluido: 0, erro: 0, processando: 0 };
+  const vals = { baixando: 0, pendente: 0, concluido: 0, erro: 0, processando: 0, analisando: 0 };
   Object.values(downloads).forEach(d => {
     if (vals[d.status] !== undefined) vals[d.status]++;
   });
 
-  const ativos = vals.baixando + vals.processando + vals.pendente;
+  const ativos = vals.baixando + vals.processando + vals.pendente + vals.analisando;
   document.getElementById('badge-ativos').textContent     = ativos;
   document.getElementById('badge-concluidos').textContent = vals.concluido + vals.erro;
 }

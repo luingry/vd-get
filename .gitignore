@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+.vdget_sniffer.json
+
+# Mídia baixada pelo utilizador — nunca deve entrar no repositório.
+downloads/

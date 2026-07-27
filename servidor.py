@@ -19,6 +19,17 @@ import uuid
 from datetime import datetime
 from urllib.parse import unquote, urlparse
 
+# Quando o stdout não é um console real (ex.: subprocess.Popen com stdout=DEVNULL/PIPE,
+# caso do controlador.py, ou saída redirecionada para arquivo), o Python herda a
+# codepage ANSI do Windows (cp1252/cp1250/…) em vez de UTF-8, e os prints com
+# caracteres de desenho de caixa (banner) ou acentos quebram com UnicodeEncodeError
+# e derrubam o processo antes mesmo de abrir o WebSocket. Ver ERRORS.md.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # ── Auto-instala dependências ─────────────────────────────────────────────────
 def instalar(pacote):
     subprocess.check_call([sys.executable, "-m", "pip", "install", pacote, "-q"])
@@ -36,6 +47,17 @@ except ImportError:
     print("[*] Instalando yt-dlp...")
     instalar("yt-dlp[default,curl-cffi]")
     import yt_dlp
+
+# Fallback headless (blob/MSE) — módulo isolado e preguiçoso: não importa Playwright
+# aqui em cima, então a ausência dele nunca impede o servidor de subir (ver sniffer.py).
+try:
+    import sniffer
+except Exception as _e_sniffer:
+    print(f"[!] sniffer.py indisponível ({_e_sniffer}); fallback headless desativado.")
+    sniffer = None
+
+# Kill switch do fallback: VDGET_SNIFFER=0 desliga tudo sem editar código (útil p/ bissecar).
+SNIFFER_HABILITADO = os.environ.get("VDGET_SNIFFER", "1") != "0"
 
 # ── ANSI (yt-dlp colore _speed_str, _eta_str, etc. quando o terminal suporta) ─
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
@@ -305,8 +327,10 @@ def marcar_atividade_download_servidor() -> None:
 
 
 def _downloads_com_transferencia_ativa() -> bool:
+    # "analisando" (sniffer headless rodando) conta como atividade — sem isso o watchdog
+    # pode encerrar o servidor no meio de um sniff (risco mapeado em 3.1 do plano).
     for v in downloads.values():
-        if v.get("status") in ("pendente", "baixando", "processando"):
+        if v.get("status") in ("pendente", "baixando", "processando", "analisando"):
             return True
     return False
 
@@ -381,6 +405,33 @@ def abrir_pasta(pasta: str) -> bool:
         return True
     subprocess.run(["xdg-open", pasta], check=False)
     return True
+
+
+# Extensões que o VDGET de fato produz. Caminho vindo do cliente (histórico do
+# localStorage, quando o servidor já não tem mais o download em memória) só é aberto com
+# o app padrão se casar com esta lista — evita que uma página local qualquer transforme o
+# servidor num "abra este .exe/.bat pra mim". Revelar a pasta no explorador não precisa
+# desta trava, porque só seleciona o item e não executa nada.
+_EXTS_MIDIA_ABRIVEL = frozenset({
+    ".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".flv", ".ts",
+    ".mp3", ".m4a", ".opus", ".ogg", ".oga", ".wav", ".flac", ".aac", ".wma",
+})
+
+
+def caminho_midia_do_cliente(caminho: str) -> str:
+    """Valida um caminho enviado pelo cliente; devolve o absoluto ou "" se não servir."""
+    c = (caminho or "").strip()
+    if not c:
+        return ""
+    try:
+        c = os.path.abspath(c)
+    except (OSError, ValueError):
+        return ""
+    if not os.path.isfile(c):
+        return ""
+    if os.path.splitext(c)[1].lower() not in _EXTS_MIDIA_ABRIVEL:
+        return ""
+    return c
 
 
 def abrir_arquivo_com_app_padrao(caminho: str) -> bool:
@@ -573,6 +624,13 @@ async def disparar_encerramento_vdget() -> None:
     if not ev or ev.is_set():
         return
     await broadcast({"tipo": "servidor_encerrando"})
+    if sniffer is not None:
+        # Fecha o Chromium do sniffer ANTES do taskkill — senão os processos dele
+        # (que não casam com o filtro de servidor.py/controlador.py) ficam órfãos (3.2 do plano).
+        try:
+            await asyncio.wait_for(sniffer.encerrar(), timeout=15)
+        except Exception:
+            pass
     matar_instancias_terminal_vdget_windows()
     ev.set()
 
@@ -594,43 +652,31 @@ async def watchdog_inatividade_sem_download() -> None:
         return
 
 
-# ── Realiza o download em thread separada ─────────────────────────────────────
-async def executar_download(dl_id: str):
-    dl = downloads[dl_id]
-    loop = asyncio.get_event_loop()
+def _progresso_pct(d: dict) -> float:
+    """yt-dlp coloca _percent (float) antes de colorir _percent_str com ANSI — float(_percent_str) quebrava e ficava 0%."""
+    if d.get("status") != "downloading":
+        return 0.0
+    p = d.get("_percent")
+    if isinstance(p, (int, float)) and p == p:  # evita NaN
+        return max(0.0, min(100.0, float(p)))
+    baixado = d.get("downloaded_bytes")
+    total = d.get("total_bytes") or d.get("total_bytes_estimate")
+    if baixado is not None and total and total > 0:
+        return max(0.0, min(100.0, 100.0 * baixado / total))
+    raw = strip_ansi(str(d.get("_percent_str") or "0%"))
+    raw = raw.replace("%", "").strip()
+    try:
+        return max(0.0, min(100.0, float(raw)))
+    except ValueError:
+        return 0.0
 
-    formatos = {
-        "melhor": "bestvideo+bestaudio/best",
-        "pior":   "worstvideo+worstaudio/worst",
-        "audio":  "bestaudio/best",
-    }
 
-    destino   = dl.get("destino", PASTA_DOWNLOAD_PADRAO)
-    qualidade = dl.get("qualidade", "melhor")
-    os.makedirs(destino, exist_ok=True)
-
-    def progresso_pct(d: dict) -> float:
-        """yt-dlp coloca _percent (float) antes de colorir _percent_str com ANSI — float(_percent_str) quebrava e ficava 0%."""
-        if d.get("status") != "downloading":
-            return 0.0
-        p = d.get("_percent")
-        if isinstance(p, (int, float)) and p == p:  # evita NaN
-            return max(0.0, min(100.0, float(p)))
-        baixado = d.get("downloaded_bytes")
-        total = d.get("total_bytes") or d.get("total_bytes_estimate")
-        if baixado is not None and total and total > 0:
-            return max(0.0, min(100.0, 100.0 * baixado / total))
-        raw = strip_ansi(str(d.get("_percent_str") or "0%"))
-        raw = raw.replace("%", "").strip()
-        try:
-            return max(0.0, min(100.0, float(raw)))
-        except ValueError:
-            return 0.0
-
+def _criar_hook_progresso(dl_id: str, loop):
+    """Hook de progresso do yt-dlp; extraído para ser reaproveitado pelo resgate via sniffer."""
     def hook(d):
         if d["status"] == "downloading":
             marcar_atividade_download_servidor()
-            pct = progresso_pct(d)
+            pct = _progresso_pct(d)
 
             downloads[dl_id].update({
                 "status":     "baixando",
@@ -661,6 +707,141 @@ async def executar_download(dl_id: str):
                 broadcast({"tipo": "atualizar", "download": downloads[dl_id]}),
                 loop
             )
+    return hook
+
+
+async def tentar_resgate_por_sniffer(dl_id: str, dl: dict, loop, qualidade: str) -> bool:
+    """
+    Ponto único de fallback (Parte 3 do plano): sobe o Chromium headless do sniffer.py
+    para descobrir o manifesto HLS/DASH quando o yt-dlp já falhou sozinho (típico de
+    players MSE/blob), e refaz o download apontando para o manifesto encontrado.
+
+    Devolve True só em caso de sucesso completo (já deixa `downloads[dl_id]` como
+    "concluido"). Qualquer falha aqui dentro devolve False silenciosamente — quem chamou
+    mantém o status "erro" com a mensagem original do yt-dlp, nunca a do sniffer.
+    """
+    dl_id_ainda_existe = dl_id in downloads
+    if not dl_id_ainda_existe:
+        return False
+
+    def _reportar(msg: str):
+        marcar_atividade_download_servidor()  # nunca deixa o watchdog matar o servidor no meio do sniff
+        if dl_id in downloads:
+            downloads[dl_id].update({"status": "analisando", "velocidade": msg})
+            asyncio.run_coroutine_threadsafe(
+                broadcast({"tipo": "atualizar", "download": downloads[dl_id]}), loop
+            )
+
+    try:
+        marcar_atividade_download_servidor()
+        downloads[dl_id].update({"status": "analisando", "velocidade": "procurando stream…"})
+        await broadcast({"tipo": "atualizar", "download": downloads[dl_id]})
+
+        resultado = await sniffer.descobrir_manifesto(dl["url"], reportar=_reportar)
+        marcar_atividade_download_servidor()
+        if not resultado:
+            return False
+        if dl_id not in downloads:
+            return False
+
+        dl["_via_sniffer"] = True  # trava recursão: se o download do manifesto falhar, não tenta de novo
+
+        # Miniatura: a extração de DOM do sniffer (og:image etc.) já veio em resultado["thumb"].
+        # Se a página não tiver NENHUMA fonte (comum em players 100% blob/MSE — sondado e
+        # confirmado: og:image, twitter:image, itemprop, link[image_src], JSON-LD e poster do
+        # <video> todos vazios), gera um frame do próprio manifesto via ffmpeg ANTES de iniciar
+        # o download, para a miniatura já aparecer na UI enquanto baixa — igual às fontes que o
+        # yt-dlp resolve sozinho. Nunca pode derrubar o download: falha aqui vira "" e seguimos.
+        thumb_pagina = (resultado.get("thumb") or "").strip()
+        if not thumb_pagina:
+            try:
+                thumb_pagina = await sniffer.gerar_thumbnail_ffmpeg(
+                    resultado["manifesto"], resultado.get("headers") or {}
+                )
+            except Exception:
+                thumb_pagina = ""
+            if thumb_pagina and dl_id in downloads:
+                downloads[dl_id].update({"thumb": thumb_pagina})
+                await broadcast({"tipo": "atualizar", "download": downloads[dl_id]})
+        if dl_id not in downloads:
+            return False  # removido durante a geração da miniatura — não vale iniciar o download
+
+        destino = dl.get("destino", PASTA_DOWNLOAD_PADRAO)
+        formatos_sniff = {
+            "melhor": "bestvideo+bestaudio/best",
+            "pior":   "worstvideo+worstaudio/worst",
+            "audio":  "bestaudio/best",
+        }
+        titulo_pagina = (resultado.get("titulo") or "").strip() or dl.get("url", "")
+        nome_base = sanitizar_nome_arquivo(titulo_pagina)
+
+        ydl_opts_sniff = {
+            "format":                     formatos_sniff.get(qualidade, qualidade),
+            "outtmpl":                    outtmpl_com_nome_base(destino, nome_base),
+            "merge_output_format":        "mp4",
+            "noplaylist":                 True,
+            "retries":                    5,
+            "fragment_retries":           5,
+            "skip_unavailable_fragments": True,
+            "progress_hooks":             [_criar_hook_progresso(dl_id, loop)],
+            "quiet":                      True,
+            "no_warnings":                True,
+            "color":                      "never",
+            "postprocessors":             [],
+            "http_headers":               resultado.get("headers") or {},
+        }
+        aplicar_opcoes_velocidade(ydl_opts_sniff, url=resultado["manifesto"])
+
+        def _baixar_manifesto():
+            with yt_dlp.YoutubeDL(ydl_opts_sniff) as ydl:
+                info = ydl.extract_info(resultado["manifesto"], download=True)
+                caminho = caminho_arquivo_baixado(ydl, info, qualidade)
+                return info, caminho
+
+        info, caminho_final = await loop.run_in_executor(None, _baixar_manifesto)
+        if dl_id not in downloads:
+            return False
+
+        titulo_final = (
+            titulo_pagina
+            or (info.get("title") if info else "")
+            or dl.get("url", "")
+        )
+        thumb_final = thumb_pagina or melhor_thumbnail(info)
+
+        downloads[dl_id].update({
+            "status":        "concluido",
+            "progresso":     100,
+            "titulo":        titulo_final,
+            "thumb":         thumb_final,
+            "velocidade":    "",
+            "eta":           "",
+            "fim":           datetime.now().strftime("%H:%M:%S"),
+            "finalizado_ts": time.time(),
+            "arquivo":       caminho_final or "",
+        })
+        marcar_atividade_download_servidor()
+        return True
+
+    except Exception as e_resgate:
+        print(f"[sniffer] resgate falhou para {dl.get('url')}: {type(e_resgate).__name__}: {e_resgate}")
+        return False
+
+
+# ── Realiza o download em thread separada ─────────────────────────────────────
+async def executar_download(dl_id: str):
+    dl = downloads[dl_id]
+    loop = asyncio.get_event_loop()
+
+    formatos = {
+        "melhor": "bestvideo+bestaudio/best",
+        "pior":   "worstvideo+worstaudio/worst",
+        "audio":  "bestaudio/best",
+    }
+
+    destino   = dl.get("destino", PASTA_DOWNLOAD_PADRAO)
+    qualidade = dl.get("qualidade", "melhor")
+    os.makedirs(destino, exist_ok=True)
 
     ydl_opts = {
         "format":                        formatos.get(qualidade, qualidade),
@@ -671,12 +852,18 @@ async def executar_download(dl_id: str):
         "fragment_retries":              5,
         "skip_unavailable_fragments":    True,
         "throttledratelimit":            100000,
-        "progress_hooks":                [hook],
+        "progress_hooks":                [_criar_hook_progresso(dl_id, loop)],
         "quiet":                         True,
         "no_warnings":                   True,
         "color":                         "never",
         "postprocessors":                [],
     }
+
+    # Headers explícitos (dict opcional em dl["headers"]) — usado pelo resgate via sniffer,
+    # mas plumbing genérica: qualquer chamador pode fornecer headers próprios (Parte 2 do plano).
+    headers_extra = dl.get("headers")
+    if isinstance(headers_extra, dict) and headers_extra:
+        ydl_opts["http_headers"] = headers_extra
 
     url_dl = dl.get("url", "")
     if url_exige_impersonate_browser(url_dl):
@@ -803,6 +990,8 @@ async def executar_download(dl_id: str):
             titulo = "Desconhecido"
         thumb = info.get("thumbnail", "") if info else ""
 
+        if dl_id not in downloads:
+            return  # usuário removeu o item da fila durante o download — nada a atualizar
         downloads[dl_id].update({
             "status":    "concluido",
             "progresso": 100,
@@ -816,13 +1005,26 @@ async def executar_download(dl_id: str):
         })
 
     except Exception as e:
-        downloads[dl_id].update({
-            "status":  "erro",
-            "erro":    mensagem_erro_download(e),
-            "progresso": 0,
-            "finalizado_ts": time.time(),
-        })
+        if dl_id not in downloads:
+            return  # idem: removido pelo usuário — não vale tentar o sniffer nem seguir
+        resgate_ok = False
+        # Fallback headless: só tenta se habilitado, módulo disponível, e ainda não tentamos
+        # (a flag _via_sniffer evita recursão — ver Parte 3 do plano). O erro original de "e"
+        # é o que prevalece caso o resgate não role; nunca é mascarado pelo do sniffer.
+        if SNIFFER_HABILITADO and sniffer is not None and not dl.get("_via_sniffer"):
+            resgate_ok = await tentar_resgate_por_sniffer(dl_id, dl, loop, qualidade)
+        # dl_id pode ter sumido DURANTE o await acima (usuário removeu no meio do sniff) —
+        # reconfirma antes de tocar em downloads[dl_id] de novo (ver ERRORS.md).
+        if not resgate_ok and dl_id in downloads:
+            downloads[dl_id].update({
+                "status":  "erro",
+                "erro":    mensagem_erro_download(e),
+                "progresso": 0,
+                "finalizado_ts": time.time(),
+            })
 
+    if dl_id not in downloads:
+        return
     await broadcast({"tipo": "atualizar", "download": downloads[dl_id]})
     marcar_atividade_download_servidor()
 
@@ -901,23 +1103,34 @@ async def handler(ws):
                     del downloads[k]
                 await broadcast({"tipo": "limpar_concluidos", "ids": removidos})
 
+            # Nas duas ações abaixo o servidor pode ter sido reiniciado (watchdog de
+            # inatividade) e já não conhecer o dl_id: `downloads` volta vazio a cada boot.
+            # O cliente guarda arquivo/destino no localStorage, então aceitamos esses
+            # campos como fallback — é o que faz o botão continuar funcionando depois de
+            # religar o servidor, em vez de falhar em silêncio.
             elif acao == "abrir_pasta_arquivo":
                 dl_id = dados.get("id")
                 if dl_id in downloads:
                     d = downloads[dl_id]
                     arq = (d.get("arquivo") or "").strip()
                     dest = (d.get("destino") or "").strip()
-                    if arq and os.path.isfile(arq):
-                        revelar_pasta_do_arquivo(arq)
-                    elif dest:
-                        abrir_pasta(dest)
+                else:
+                    arq = (dados.get("arquivo") or "").strip()
+                    dest = (dados.get("destino") or "").strip()
+                if arq and os.path.isfile(arq):
+                    revelar_pasta_do_arquivo(arq)
+                elif dest:
+                    abrir_pasta(dest)
 
             elif acao == "abrir_arquivo":
                 dl_id = dados.get("id")
                 if dl_id in downloads:
                     arq = (downloads[dl_id].get("arquivo") or "").strip()
-                    if arq:
-                        abrir_arquivo_com_app_padrao(arq)
+                else:
+                    # Caminho vindo do cliente passa pela validação (existe + é mídia).
+                    arq = caminho_midia_do_cliente(dados.get("arquivo"))
+                if arq:
+                    abrir_arquivo_com_app_padrao(arq)
 
             elif acao == "encerrar_servidor":
                 await disparar_encerramento_vdget()
