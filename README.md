@@ -89,6 +89,9 @@ oculto — sem consola, sem navegador, sem `.bat` aberto. O backend sobe quando 
   `sniffer.py` em `backend/`; continua exigindo **Python 3** instalado.
 - Pacote: `powershell -File stk/scripts/pack.ps1` → `artifacts/vd-get-<versão>.zip`
   (o `scripts/pack-modules.ps1` do SwissTechKnife inclui-o no feed local).
+- Release: subir a `Version` em `stk/Directory.Build.props` na `main` publica `module-v<versão>` com o pacote
+  (`.github/workflows/module-release.yml`), e o catálogo do SwissTechKnife se atualiza sozinho. Notas da versão
+  em inglês vão em `releaseNotes` de `stk/VdGet.Module/module.json`.
 - SDK: `powershell -File stk/scripts/update-sdk.ps1` atualiza `stk/lib/SwissTechKnife.Sdk.dll`.
 - Dados do módulo (histórico, pastas, `backend.log`) ficam na pasta de dados do módulo no
   SwissTechKnife; os downloads vão por padrão para a pasta **Downloads** do Windows.

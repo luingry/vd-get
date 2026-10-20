@@ -20,7 +20,8 @@ $version = ($props.Project.PropertyGroup | Where-Object { $_.Version } | Select-
 $manifestPath = Join-Path $project 'module.json'
 $utf8 = New-Object Text.UTF8Encoding $false
 $manifest = [IO.File]::ReadAllText($manifestPath, $utf8)
-$manifest = [regex]::Replace($manifest, '"version":\s*"[^"]*"', "`"version`": `"$version`"")
+# Only the first "version" (the module's); the ones in releaseNotes name past versions.
+$manifest = ([regex]'"version":\s*"[^"]*"').Replace($manifest, "`"version`": `"$version`"", 1)
 [IO.File]::WriteAllText($manifestPath, $manifest, $utf8)
 
 dotnet build $project -c $Configuration -nologo -v q
