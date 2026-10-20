@@ -3,4 +3,9 @@ __pycache__/
 .vdget_sniffer.json
 
 # Mídia baixada pelo utilizador — nunca deve entrar no repositório.
-downloads/
+/downloads/
+
+# Módulo do SwissTechKnife (build e pacotes).
+stk/**/bin/
+stk/**/obj/
+artifacts/

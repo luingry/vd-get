@@ -33,7 +33,9 @@ import urllib.request
 from urllib.parse import urljoin, urlparse
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
-_CACHE_PATH = os.path.join(_DIR, ".vdget_sniffer.json")
+# VDGET_DATA: pasta gravável fora do código (módulo do SwissTechKnife, cuja pasta de instalação
+# é substituída a cada atualização).
+_CACHE_PATH = os.path.join(os.environ.get("VDGET_DATA") or _DIR, ".vdget_sniffer.json")
 
 # User-Agent desktop "normal" (sem a substring HeadlessChrome, que vários sites bloqueiam).
 UA_DESKTOP = (

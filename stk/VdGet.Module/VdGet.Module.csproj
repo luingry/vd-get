@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    SwissTechKnife module: a native page for VDGET. The Python backend (servidor.py + sniffer.py from the
+    repository root) ships inside the package under backend/ and runs as a hidden child process.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>VdGet.Module</AssemblyName>
+    <RootNamespace>VdGet.Module</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Compile-only: the host provides the one shared copy at runtime (scripts/update-sdk.ps1 refreshes it). -->
+    <Reference Include="SwissTechKnife.Sdk" HintPath="..\lib\SwissTechKnife.Sdk.dll" Private="false" />
+    <Reference Include="System.Web" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="module.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\servidor.py" Link="backend\servidor.py" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\sniffer.py" Link="backend\sniffer.py" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

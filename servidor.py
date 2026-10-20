@@ -59,6 +59,18 @@ except Exception as _e_sniffer:
 # Kill switch do fallback: VDGET_SNIFFER=0 desliga tudo sem editar código (útil p/ bissecar).
 SNIFFER_HABILITADO = os.environ.get("VDGET_SNIFFER", "1") != "0"
 
+# Modo hospedado (módulo do SwissTechKnife): o processo é filho do host, sem consola nem
+# navegador. Nesse modo o servidor nunca mata janelas/processos do VDGET avulso (o .bat e o
+# controlador.py continuam podendo rodar em paralelo, noutra porta).
+MODO_HOSPEDADO = os.environ.get("VDGET_HOSTED", "0") == "1"
+
+
+def _int_env(nome: str, padrao: int) -> int:
+    try:
+        return int(os.environ.get(nome, "") or padrao)
+    except ValueError:
+        return padrao
+
 # ── ANSI (yt-dlp colore _speed_str, _eta_str, etc. quando o terminal suporta) ─
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -303,7 +315,7 @@ def info_tem_wav_ou_flac_nativo(info: dict | None) -> bool:
 
 # ── Estado global ─────────────────────────────────────────────────────────────
 _DIR_SERVIDOR = os.path.dirname(os.path.abspath(__file__))
-PASTA_DOWNLOAD_PADRAO = os.path.join(_DIR_SERVIDOR, "downloads")
+PASTA_DOWNLOAD_PADRAO = os.environ.get("VDGET_DOWNLOADS") or os.path.join(_DIR_SERVIDOR, "downloads")
 
 # Ajuste fino de throughput (HLS/DASH e downloads HTTP grandes)
 FRAGMENTOS_PARALELOS = 16
@@ -315,7 +327,8 @@ clientes:  set = set()            # websockets conectados
 _shutdown: asyncio.Event | None = None  # preenchido em main(); encerrar_servidor
 
 # Encerramento automático: após N s sem atividade de download (com UI já ligada ao WS).
-SEGUNDOS_INATIVIDADE_SEM_DOWNLOAD = 180.0  # 3 minutos
+# VDGET_IDLE_SECONDS=0 desliga o encerramento automático.
+SEGUNDOS_INATIVIDADE_SEM_DOWNLOAD = float(_int_env("VDGET_IDLE_SECONDS", 180))  # 3 minutos
 _t_mono_ultima_atividade_download = 0.0
 _houve_cliente_ws_para_inatividade = False
 
@@ -561,7 +574,7 @@ def matar_instancias_terminal_vdget_windows():
     outros Python que executam este servidor.py ou controlador.py na mesma pasta.
     Não mata o processo atual (evita suicídio antes do shutdown).
     """
-    if platform.system() != "Windows":
+    if platform.system() != "Windows" or MODO_HOSPEDADO:
         return
     fl = _subprocess_flags_windows_silencioso()
     subprocess.run(
@@ -642,7 +655,7 @@ async def watchdog_inatividade_sem_download() -> None:
         ev = _shutdown
         if ev is None or ev.is_set():
             return
-        if not _houve_cliente_ws_para_inatividade:
+        if SEGUNDOS_INATIVIDADE_SEM_DOWNLOAD <= 0 or not _houve_cliente_ws_para_inatividade:
             continue
         if _downloads_com_transferencia_ativa():
             continue
@@ -1144,7 +1157,8 @@ async def handler(ws):
 # ── Entry point ───────────────────────────────────────────────────────────────
 async def main():
     global _shutdown, _t_mono_ultima_atividade_download, _houve_cliente_ws_para_inatividade
-    HOST, PORT = "localhost", 8765
+    HOST = os.environ.get("VDGET_HOST") or "localhost"
+    PORT = _int_env("VDGET_PORT", 8765)
     _shutdown = asyncio.Event()
     _t_mono_ultima_atividade_download = time.monotonic()
     _houve_cliente_ws_para_inatividade = False

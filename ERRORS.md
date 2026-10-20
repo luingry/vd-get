@@ -5,6 +5,34 @@ Antes de investigar um erro novo, consulte esta lista.
 
 ---
 
+## -3. Módulo do SwissTechKnife: armadilhas ao hospedar o `servidor.py` (stk/)
+
+**Sintomas evitados / encontrados**
+
+- `python` no PATH do Git Bash/CMD pode ser o *alias* da Microsoft Store
+  (`...\WindowsApps\python.exe`), que abre a Store em vez de rodar o Python.
+- Iniciar via `py.exe` deixa o `python.exe` real como neto: matar o `py.exe` não para os downloads.
+- O `matar_instancias_terminal_vdget_windows()` do encerramento matava, por título de janela,
+  o `iniciar.bat` de um VDGET avulso aberto ao mesmo tempo.
+- Cache do sniffer, `__pycache__` e diretório de trabalho na pasta de instalação do módulo
+  bloqueiam/sujam a pasta que o SwissTechKnife substitui ao atualizar.
+- Build do módulo: `MC1000 Could not find assembly 'System.Web'` ao referenciar só
+  `System.Web.Extensions` (JavaScriptSerializer) num projeto WPF.
+
+**Solução aplicada**
+
+- `PythonLocator` pergunta ao `py -3` o `sys.executable` e roda esse `python.exe` direto;
+  no fallback pelo PATH ignora `\WindowsApps\`.
+- O processo entra num *Job Object* com kill-on-close: backend, pip, ffmpeg e Chrome headless
+  morrem junto com o host, mesmo em crash.
+- `VDGET_HOSTED=1` pula o `taskkill`; porta livre via `VDGET_PORT`; `VDGET_DATA` para o cache
+  do sniffer; `PYTHONDONTWRITEBYTECODE=1`; `WorkingDirectory` = pasta de dados do módulo.
+- Referenciar também `System.Web` no `.csproj` (o compilador de XAML precisa dele).
+- `state.json` ilegível é copiado para `state.damaged.json` antes de recomeçar, para o próximo
+  save não apagar o histórico.
+
+---
+
 ## -2. Remover/abrir item não fazia nada com o servidor desligado (falha silenciosa)
 
 **Sintoma**

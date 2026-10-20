@@ -1,0 +1,9 @@
+{
+  "id": "vd-get",
+  "version": "1.0.0",
+  "entryAssembly": "VdGet.Module.dll",
+  "entryType": "VdGet.Module.VdGetModule",
+  "sdkVersion": 1,
+  "activation": "onDemand",
+  "loadMode": "memory"
+}

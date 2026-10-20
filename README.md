@@ -78,6 +78,32 @@ isso ao yt-dlp para completar o download.
 - Pode ser desligado por completo com a variável de ambiente `VDGET_SNIFFER=0` (útil para
   isolar regressões, sem editar código).
 
+## Módulo do SwissTechKnife (`stk/`)
+
+O VDGET também roda como módulo do [SwissTechKnife](https://github.com/luingry/SwissTechKnife):
+uma página nativa (WPF) substitui o `index.html`, e o `servidor.py` roda como processo filho
+oculto — sem consola, sem navegador, sem `.bat` aberto. O backend sobe quando a página abre
+(ou no próximo download), fecha sozinho após 3 min sem uso e morre junto com o SwissTechKnife.
+
+- Código: `stk/VdGet.Module` (C#, .NET Framework 4.8). O pacote leva `servidor.py` e
+  `sniffer.py` em `backend/`; continua exigindo **Python 3** instalado.
+- Pacote: `powershell -File stk/scripts/pack.ps1` → `artifacts/vd-get-<versão>.zip`
+  (o `scripts/pack-modules.ps1` do SwissTechKnife inclui-o no feed local).
+- SDK: `powershell -File stk/scripts/update-sdk.ps1` atualiza `stk/lib/SwissTechKnife.Sdk.dll`.
+- Dados do módulo (histórico, pastas, `backend.log`) ficam na pasta de dados do módulo no
+  SwissTechKnife; os downloads vão por padrão para a pasta **Downloads** do Windows.
+
+Variáveis de ambiente do `servidor.py` usadas pelo módulo (todas opcionais; sem elas o
+comportamento é o de sempre):
+
+| Variável | Efeito |
+|----------|--------|
+| `VDGET_HOSTED=1` | Não mata janelas/processos do VDGET avulso ao encerrar. |
+| `VDGET_HOST` / `VDGET_PORT` | Endereço e porta do WebSocket (padrão `localhost:8765`). |
+| `VDGET_IDLE_SECONDS` | Segundos sem atividade até encerrar (padrão 180; `0` desliga). |
+| `VDGET_DOWNLOADS` | Pasta de destino padrão (padrão `downloads/` ao lado do servidor). |
+| `VDGET_DATA` | Pasta gravável para o cache do sniffer (padrão: a pasta do código). |
+
 ## Portas
 
 - **8765** — WebSocket (`servidor.py`).

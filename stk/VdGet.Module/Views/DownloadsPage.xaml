@@ -1,0 +1,228 @@
+<UserControl x:Class="VdGet.Module.Views.DownloadsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:SwissTechKnife.Sdk;assembly=SwissTechKnife.Sdk"
+             AllowDrop="True" PreviewDragOver="OnDragOver" Drop="OnDrop">
+    <!-- Design-system keys only (SwissTechKnife.Sdk theme, resolved from the host at runtime). -->
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="Visible" />
+
+        <!-- Rows fade and rise in when they join a list. -->
+        <Style x:Key="Row" TargetType="Grid">
+            <Setter Property="Margin" Value="0,12,0,0" />
+            <Setter Property="Opacity" Value="0" />
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <TranslateTransform Y="6" />
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="Opacity" To="1" Duration="{StaticResource Motion.Slow}" EasingFunction="{StaticResource Ease.Out}" />
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(TranslateTransform.Y)" To="0" Duration="{StaticResource Motion.Slow}" EasingFunction="{StaticResource Ease.Out}" />
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="Thumb" TargetType="Border">
+            <Setter Property="Width" Value="96" />
+            <Setter Property="Height" Value="54" />
+            <Setter Property="CornerRadius" Value="{StaticResource Radius.Sm}" />
+            <Setter Property="Background" Value="{StaticResource Brush.Surface3}" />
+            <Setter Property="ClipToBounds" Value="True" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
+
+        <Style x:Key="Detail" TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}">
+            <Setter Property="Margin" Value="0,4,0,0" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsError}" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Danger}" />
+                    <Setter Property="TextTrimming" Value="None" />
+                    <Setter Property="TextWrapping" Value="Wrap" />
+                    <Setter Property="MaxHeight" Value="54" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <DataTemplate x:Key="ThumbTemplate">
+            <Border Style="{StaticResource Thumb}">
+                <Grid>
+                    <TextBlock Text="&#xE714;" Style="{StaticResource Text.Icon}" Foreground="{StaticResource Brush.Text.Tertiary}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality">
+                        <Image.Style>
+                            <Style TargetType="Image">
+                                <Style.Triggers>
+                                    <Trigger Property="Source" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Image.Style>
+                    </Image>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ActiveTemplate">
+            <Grid Style="{StaticResource Row}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ContentPresenter Content="{Binding}" ContentTemplate="{StaticResource ThumbTemplate}" />
+                <StackPanel Grid.Column="1" Margin="14,2,12,0">
+                    <TextBlock Text="{Binding Title}" Style="{StaticResource Text.BodyStrong}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Url}" />
+                    <TextBlock Text="{Binding Detail}" Style="{StaticResource Detail}" />
+                    <ProgressBar Margin="0,10,0,0" Maximum="100" Value="{Binding Progress, Mode=OneWay}" IsIndeterminate="{Binding IsIndeterminate, Mode=OneWay}" />
+                </StackPanel>
+                <Button Grid.Column="2" Style="{StaticResource Button.Icon.Sm}" ui:Ui.Icon="&#xE711;" ToolTip="Cancelar e remover"
+                        VerticalAlignment="Top" Click="OnRemove" />
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="CompletedTemplate">
+            <Grid Style="{StaticResource Row}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ContentPresenter Content="{Binding}" ContentTemplate="{StaticResource ThumbTemplate}" />
+                <StackPanel Grid.Column="1" Margin="14,2,12,0">
+                    <TextBlock Text="{Binding Title}" Style="{StaticResource Text.BodyStrong}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Url}" />
+                    <TextBlock Text="{Binding Detail}" Style="{StaticResource Detail}" ToolTip="{Binding Detail}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top">
+                    <Button Style="{StaticResource Button.Icon.Sm}" ui:Ui.Icon="&#xE72C;" ToolTip="Tentar de novo" Click="OnRetry"
+                            Visibility="{Binding IsError, Converter={StaticResource Visible}}" />
+                    <Button Style="{StaticResource Button.Icon.Sm}" ui:Ui.Icon="&#xE768;" ToolTip="Abrir arquivo" Click="OnOpenFile"
+                            Visibility="{Binding CanOpenFile, Converter={StaticResource Visible}}" />
+                    <Button Style="{StaticResource Button.Icon.Sm}" ui:Ui.Icon="&#xE838;" ToolTip="Mostrar na pasta" Click="OnOpenFolder"
+                            Visibility="{Binding IsDone, Converter={StaticResource Visible}}" Margin="4,0,0,0" />
+                    <Button Style="{StaticResource Button.Icon.Sm}" ui:Ui.Icon="&#xE711;" ToolTip="Remover da lista" Click="OnRemove" Margin="4,0,0,0" />
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
+
+        <Style x:Key="Empty" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,18,0,6" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer Padding="28,8,28,28">
+        <StackPanel MaxWidth="860" HorizontalAlignment="Left">
+            <!-- New downloads -->
+            <Border Style="{StaticResource Card}" Padding="24">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="NOVO DOWNLOAD" Style="{StaticResource Text.Overline}" VerticalAlignment="Center" />
+                        <Border x:Name="StatusChip" Style="{StaticResource Chip}" HorizontalAlignment="Right">
+                            <TextBlock x:Name="StatusText" VerticalAlignment="Center" />
+                        </Border>
+                    </Grid>
+
+                    <TextBox x:Name="UrlInput" Margin="0,14,0,0" Height="96" AcceptsReturn="True" TextWrapping="NoWrap"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                             ui:Ui.Placeholder="Cole um ou mais links, um por linha (YouTube, X, Instagram, SoundCloud…)"
+                             TextChanged="OnUrlsChanged" PreviewKeyDown="OnUrlsKeyDown" />
+
+                    <Grid Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Style="{StaticResource Segmented.Container}" VerticalAlignment="Center">
+                            <ui:SegmentedPanel>
+                                <RadioButton x:Name="BestOption" Style="{StaticResource Segmented.Item}" GroupName="Quality" Content="Melhor qualidade" Checked="OnQualityChanged" />
+                                <RadioButton x:Name="SmallestOption" Style="{StaticResource Segmented.Item}" GroupName="Quality" Content="Menor tamanho" Checked="OnQualityChanged" />
+                                <RadioButton x:Name="AudioOption" Style="{StaticResource Segmented.Item}" GroupName="Quality" Content="Somente áudio" Checked="OnQualityChanged" />
+                            </ui:SegmentedPanel>
+                        </Border>
+                        <ComboBox x:Name="FolderBox" Grid.Column="1" Margin="12,0,0,0" MinWidth="160" VerticalAlignment="Center"
+                                  SelectionChanged="OnFolderChanged" ToolTip="Pasta de destino">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <Button Grid.Column="2" Style="{StaticResource Button.Icon}" ui:Ui.Icon="&#xE8DA;" ToolTip="Escolher outra pasta"
+                                Margin="8,0,0,0" VerticalAlignment="Center" Click="OnPickFolder" />
+                        <Button x:Name="AddButton" Grid.Column="3" Style="{StaticResource Button.Primary}" ui:Ui.Icon="&#xE896;" Content="Baixar"
+                                Margin="12,0,0,0" VerticalAlignment="Center" Click="OnAdd" ToolTip="Baixar (Ctrl+Enter)" />
+                    </Grid>
+
+                    <!-- Backend problems (no Python, crash). -->
+                    <Border x:Name="Problem" Margin="0,16,0,0" Padding="16,12" CornerRadius="{StaticResource Radius.Md}"
+                            Background="{StaticResource Brush.Danger.Soft}" Visibility="Collapsed">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock x:Name="ProblemTitle" Style="{StaticResource Text.BodyStrong}" Foreground="{StaticResource Brush.Danger}" />
+                                <TextBlock x:Name="ProblemText" Style="{StaticResource Text.Caption}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                                <Button x:Name="LogButton" Style="{StaticResource Button.Ghost}" Content="Ver log" Click="OnOpenLog" />
+                                <Button Style="{StaticResource Button.Secondary}" ui:Ui.Icon="&#xE72C;" Content="Tentar de novo" Margin="8,0,0,0" Click="OnRetryBackend" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- In progress -->
+            <Border Style="{StaticResource Card}" Padding="24" Margin="0,16,0,0">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="EM ANDAMENTO" Style="{StaticResource Text.Overline}" VerticalAlignment="Center" />
+                        <Border Style="{StaticResource Chip}" Margin="10,0,0,0">
+                            <TextBlock x:Name="ActiveCount" VerticalAlignment="Center" Foreground="{StaticResource Brush.Text.Secondary}" />
+                        </Border>
+                    </StackPanel>
+                    <ItemsControl x:Name="ActiveList" ItemTemplate="{StaticResource ActiveTemplate}" Focusable="False" />
+                    <StackPanel x:Name="ActiveEmpty" Style="{StaticResource Empty}">
+                        <TextBlock Text="&#xE896;" Style="{StaticResource Text.Icon}" FontSize="20" Foreground="{StaticResource Brush.Text.Tertiary}" HorizontalAlignment="Center" />
+                        <TextBlock Text="Nenhum download em andamento" Style="{StaticResource Text.Secondary}" Margin="0,8,0,0" HorizontalAlignment="Center" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Finished -->
+            <Border Style="{StaticResource Card}" Padding="24" Margin="0,16,0,0">
+                <StackPanel>
+                    <Grid>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="CONCLUÍDOS" Style="{StaticResource Text.Overline}" VerticalAlignment="Center" />
+                            <Border Style="{StaticResource Chip}" Margin="10,0,0,0">
+                                <TextBlock x:Name="CompletedCount" VerticalAlignment="Center" Foreground="{StaticResource Brush.Text.Secondary}" />
+                            </Border>
+                        </StackPanel>
+                        <StackPanel x:Name="CompletedTools" Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button x:Name="SortButton" Style="{StaticResource Button.Icon.Sm}" Click="OnToggleSort" />
+                            <Button x:Name="ClearButton" Style="{StaticResource Button.Ghost}" Content="Limpar tudo" Margin="6,0,0,0" Click="OnClear" />
+                        </StackPanel>
+                    </Grid>
+                    <ItemsControl x:Name="CompletedList" ItemTemplate="{StaticResource CompletedTemplate}" Focusable="False" />
+                    <StackPanel x:Name="CompletedEmpty" Style="{StaticResource Empty}">
+                        <TextBlock Text="&#xE73E;" Style="{StaticResource Text.Icon}" FontSize="20" Foreground="{StaticResource Brush.Text.Tertiary}" HorizontalAlignment="Center" />
+                        <TextBlock Text="Os downloads concluídos aparecem aqui" Style="{StaticResource Text.Secondary}" Margin="0,8,0,0" HorizontalAlignment="Center" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
