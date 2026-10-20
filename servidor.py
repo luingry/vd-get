@@ -527,6 +527,94 @@ def erro_pede_impersonate(err: Exception) -> bool:
     )
 
 
+# ── Bloqueio anti-bot do YouTube ("Sign in to confirm you're not a bot") ─────
+# Acontece quando o IP fica marcado (vem junto de HTTP 429). Atualizar o yt-dlp não basta;
+# o que resolve é mandar cookies de uma sessão logada. Ordem dos fallbacks:
+#   1. cookies.txt (formato Netscape) na pasta de dados ou ao lado do servidor.py;
+#   2. cookies lidos direto dos navegadores instalados (Chromium recente pode recusar: DPAPI);
+#   3. cliente "android" do YouTube, que hoje ainda passa sem PO token (mas só entrega 360p).
+NAVEGADORES_COOKIES = ("firefox", "edge", "chrome", "brave", "opera", "vivaldi", "chromium")
+
+
+def erro_pede_login_youtube(err: Exception) -> bool:
+    msg = (str(err) or "").lower()
+    return "confirm you" in msg and "not a bot" in msg
+
+
+def caminhos_cookies_txt() -> list[str]:
+    pastas = [os.environ.get("VDGET_DATA") or "", _DIR_SERVIDOR]
+    return [
+        os.path.join(p, "cookies.txt") for p in pastas
+        if p and os.path.isfile(os.path.join(p, "cookies.txt"))
+    ]
+
+
+def estrategias_anti_bot_youtube(ydl_opts: dict) -> list[tuple[str, dict]]:
+    """Variações de ydl_opts a tentar, em ordem, quando o YouTube pede login."""
+    estrategias: list[tuple[str, dict]] = []
+    for caminho in caminhos_cookies_txt():
+        opts = dict(ydl_opts)
+        opts["cookiefile"] = caminho
+        estrategias.append((f"cookies.txt ({caminho})", opts))
+    for nav in NAVEGADORES_COOKIES:
+        opts = dict(ydl_opts)
+        opts["cookiesfrombrowser"] = (nav,)
+        estrategias.append((f"cookies do {nav}", opts))
+    opts = dict(ydl_opts)
+    extractor_args = dict(opts.get("extractor_args") or {})
+    extractor_args["youtube"] = {"player_client": ["android"]}
+    opts["extractor_args"] = extractor_args
+    estrategias.append(("cliente android (qualidade limitada)", opts))
+    return estrategias
+
+
+def mensagem_bloqueio_youtube() -> str:
+    pasta = os.environ.get("VDGET_DATA") or _DIR_SERVIDOR
+    return (
+        "O YouTube bloqueou este IP (\"Sign in to confirm you're not a bot\") e nenhum "
+        "fallback funcionou. Exporte os cookies de uma sessão logada no YouTube "
+        "(extensão \"Get cookies.txt LOCALLY\", formato Netscape) e salve como "
+        f"\"{os.path.join(pasta, 'cookies.txt')}\"; depois tente de novo."
+    )
+
+
+# ── Atualização automática do yt-dlp (no máximo 1x por dia, em segundo plano) ─
+# O YouTube muda com frequência e um yt-dlp desatualizado é a causa mais comum de falha.
+# A versão nova só vale a partir do próximo início do servidor (o módulo já está importado).
+INTERVALO_ATUALIZACAO_YTDLP_S = 24 * 3600
+
+
+def atualizar_yt_dlp_em_segundo_plano() -> None:
+    if os.environ.get("VDGET_AUTO_UPDATE", "1") == "0":
+        return
+    marca = os.path.join(os.environ.get("VDGET_DATA") or _DIR_SERVIDOR, ".ytdlp_update")
+    try:
+        if time.time() - os.path.getmtime(marca) < INTERVALO_ATUALIZACAO_YTDLP_S:
+            return
+    except OSError:
+        pass
+
+    def _atualizar():
+        try:
+            r = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-U", "-q",
+                 "--disable-pip-version-check", "yt-dlp[default,curl-cffi]"],
+                capture_output=True, text=True, timeout=600,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if r.returncode == 0:
+                with open(marca, "w", encoding="utf-8") as f:
+                    f.write(datetime.now().isoformat())
+                print("[*] yt-dlp verificado/atualizado (vale no próximo início).")
+            else:
+                print(f"[!] Falha ao atualizar yt-dlp: {(r.stderr or '').strip()[:300]}")
+        except Exception as e_upd:
+            print(f"[!] Falha ao atualizar yt-dlp: {e_upd}")
+
+    import threading
+    threading.Thread(target=_atualizar, name="ytdlp-update", daemon=True).start()
+
+
 def habilitar_impersonate_generic(ydl_opts: dict, url: str = "") -> bool:
     """
     Fingerprint de Chrome via curl_cffi (API yt-dlp exige ImpersonateTarget, não str).
@@ -980,21 +1068,39 @@ async def executar_download(dl_id: str):
             )
             return info, caminho
 
+    async def _baixar_contornando_bloqueio_youtube(erro_original: Exception):
+        for descricao, opts in estrategias_anti_bot_youtube(ydl_opts):
+            if dl_id not in downloads:
+                raise erro_original
+            try:
+                resultado = await loop.run_in_executor(
+                    None, lambda o=opts: _baixar_com_opts(o)
+                )
+                print(f"[*] Bloqueio do YouTube contornado via {descricao}.")
+                return resultado
+            except Exception as e_tentativa:
+                print(f"[!] Bloqueio do YouTube: {descricao} falhou: "
+                      f"{mensagem_erro_download(e_tentativa)[:200]}")
+        raise RuntimeError(mensagem_bloqueio_youtube()) from erro_original
+
     try:
         try:
             info, caminho_final = await loop.run_in_executor(
                 None, lambda: _baixar_com_opts(ydl_opts)
             )
         except Exception as e:
-            if not erro_pede_impersonate(e):
-                raise
-            if ydl_opts.get("impersonate"):
-                raise
-            if not habilitar_impersonate_generic(ydl_opts, url=url_dl):
-                raise
-            info, caminho_final = await loop.run_in_executor(
-                None, lambda: _baixar_com_opts(ydl_opts)
-            )
+            if erro_pede_login_youtube(e):
+                info, caminho_final = await _baixar_contornando_bloqueio_youtube(e)
+            else:
+                if not erro_pede_impersonate(e):
+                    raise
+                if ydl_opts.get("impersonate"):
+                    raise
+                if not habilitar_impersonate_generic(ydl_opts, url=url_dl):
+                    raise
+                info, caminho_final = await loop.run_in_executor(
+                    None, lambda: _baixar_com_opts(ydl_opts)
+                )
         if info and (qualidade == "audio" or usar_titulo_audio):
             titulo = titulo_audio_exibicao(info, dl.get("url") or "Desconhecido")
         elif info:
@@ -1170,6 +1276,7 @@ async def main():
 ║  Abra o arquivo  index.html  no navegador    ║
 ╚══════════════════════════════════════════════╝
 """)
+    atualizar_yt_dlp_em_segundo_plano()
     async with websockets.serve(handler, HOST, PORT):
         wd = asyncio.create_task(watchdog_inatividade_sem_download())
         try:

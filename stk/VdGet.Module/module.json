@@ -1,6 +1,6 @@
 {
   "id": "vd-get",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "entryAssembly": "VdGet.Module.dll",
   "entryType": "VdGet.Module.VdGetModule",
   "sdkVersion": 1,

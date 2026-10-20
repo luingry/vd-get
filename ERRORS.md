@@ -357,3 +357,33 @@ cache) nunca compete com o tempo de navegação/descoberta do manifesto.
 Qualquer preparo de ambiente que envolva instalação de pacotes ou download de binários deve
 ficar fora do orçamento de tempo da operação "de verdade" que ele habilita — dar-lhe um
 `asyncio.wait_for` próprio, sequenciado antes, em vez de aninhado dentro do mesmo.
+
+## 4. YouTube: "Sign in to confirm you're not a bot"
+
+**Sintoma**
+
+`DownloadError: ERROR: [youtube] <id>: Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies…`
+em qualquer vídeo do YouTube, inclusive com o yt-dlp mais recente (2026.08.19).
+
+**Causa raiz**
+
+O IP ficou marcado pelo YouTube (as requisições vêm junto de `HTTP Error 429`). Os clientes
+web (`web_safari`, `mweb`, `web_embedded`) só entregam storyboard sem PO token; `tv*` e
+`android_vr` também pedem login. Ler cookies do navegador não funciona nesta máquina: Edge
+falha com "Failed to decrypt with DPAPI" (app-bound encryption do Chromium) e o Chrome trava
+o banco ("Could not copy Chrome cookie database"); não há Firefox.
+
+**Solução aplicada**
+
+`executar_download()` detecta o erro (`erro_pede_login_youtube`) e tenta, em ordem
+(`estrategias_anti_bot_youtube`): `cookies.txt` na pasta de dados (`VDGET_DATA`) ou ao lado
+do `servidor.py` → cookies de cada navegador instalado → cliente `android` do YouTube (passa
+sem PO token, mas só oferece o formato 18, 360p). Se tudo falhar, a mensagem de erro explica
+onde salvar o `cookies.txt`. Além disso, o servidor atualiza o yt-dlp em segundo plano no
+máximo 1x/dia (`atualizar_yt_dlp_em_segundo_plano`, desligável com `VDGET_AUTO_UPDATE=0`).
+
+**Como evitar no futuro**
+
+Para qualidade máxima com IP marcado, exporte cookies de uma sessão logada (formato
+Netscape) para `cookies.txt`. Se o cliente `android` também parar, a saída é um provedor de
+PO token (plugin `bgutil-ytdlp-pot-provider`).
